@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { buildDetails } from './details.js';
 
 // The circuit: a copper trace looping around a circuit board, sampled into
 // evenly spaced points so karts can find where they are on it.
@@ -215,7 +216,7 @@ function strip(track, latA, latB, offA, offB, vScale, { i0 = 0, i1 = SAMPLES, gr
   return g;
 }
 
-function canvasTexture(w, h, draw) {
+export function canvasTexture(w, h, draw) {
   const c = document.createElement('canvas');
   c.width = w;
   c.height = h;
@@ -227,7 +228,7 @@ function canvasTexture(w, h, draw) {
 }
 
 // Seeded random so the board looks the same every round.
-function rng(seed) {
+export function rng(seed) {
   return () => {
     seed = (seed * 16807) % 2147483647;
     return (seed - 1) / 2147483646;
@@ -315,6 +316,7 @@ export function buildBoard(scene, track) {
 
   const reserved = [];
   const hazards = buildHazards(scene, track, reserved);
+  const details = buildDetails(scene, track, reserved);
   const lights = buildScenery(scene, track, reserved);
   buildGantry(scene, track);
 
@@ -326,6 +328,7 @@ export function buildBoard(scene, track) {
       trackMat.uniforms.uTime.value = time;
       for (const m of hazards.decals) m.uniforms.uTime.value = time;
       hazards.animate(time);
+      details.update(time);
     },
   };
 }
@@ -558,16 +561,58 @@ function buildScenery(scene, track, reserved = []) {
   };
   addChip(13, -80, 34, 17, 0.15, bigMats);
 
-  for (let n = 0; n < 600 && placed.length < 70; n++) {
+  const bodyMat = new THREE.MeshStandardMaterial({ color: 0xd9c49a, roughness: 0.6 });
+  const bandMats = [0x8b4513, 0xd42a2a, 0xff8c1a, 0xf2d21c, 0x2a9d4a, 0x2a5bd4].map((c) => new THREE.MeshStandardMaterial({ color: c, roughness: 0.5 }));
+  const crystalMat = new THREE.MeshStandardMaterial({ color: 0xc8cdd6, roughness: 0.2, metalness: 1 });
+  const addResistor = (x, z, rot) => {
+    // Beige body with colour bands on two wire legs.
+    const g = new THREE.Group();
+    const body = new THREE.Mesh(new THREE.CylinderGeometry(0.9, 0.9, 4, 16).rotateZ(Math.PI / 2), bodyMat);
+    body.position.y = 1.6;
+    g.add(body);
+    [-1.2, -0.5, 0.2, 1.1].forEach((bx) => {
+      const band = new THREE.Mesh(new THREE.CylinderGeometry(0.93, 0.93, 0.32, 16).rotateZ(Math.PI / 2), bandMats[Math.floor(rand() * bandMats.length)]);
+      band.position.set(bx, 1.6, 0);
+      g.add(band);
+    });
+    for (const s of [-1, 1]) {
+      const leg = new THREE.Mesh(new THREE.CylinderGeometry(0.12, 0.12, 1.6), pinMat);
+      leg.position.set(s * 2.6, 0.8, 0);
+      const wire = new THREE.Mesh(new THREE.CylinderGeometry(0.12, 0.12, 0.7).rotateZ(Math.PI / 2), pinMat);
+      wire.position.set(s * 2.3, 1.6, 0);
+      g.add(leg, wire);
+    }
+    g.position.set(x, 0, z);
+    g.rotation.y = rot;
+    scene.add(g);
+    placed.push([x, z, 3.5]);
+  };
+  const addCrystal = (x, z, rot) => {
+    const c = new THREE.Mesh(new THREE.CapsuleGeometry(1.1, 2.4, 6, 16).rotateZ(Math.PI / 2), crystalMat);
+    c.scale.set(1, 0.55, 0.6);
+    c.position.set(x, 0.65, z);
+    c.rotation.y = rot;
+    scene.add(c);
+    placed.push([x, z, 2.8]);
+  };
+
+  for (let n = 0; n < 900 && placed.length < 120; n++) {
     const x = -270 + rand() * 540;
     const z = -310 + rand() * 430;
     const kind = rand();
-    if (kind < 0.45) {
+    if (kind > 0.78) {
+      const rot = rand() * Math.PI;
+      if (!clear(x, z, 5) || !free(x, z, 3.5)) continue;
+      if (kind > 0.9) addResistor(x, z, rot);
+      else addCrystal(x, z, rot);
+      continue;
+    }
+    if (kind < 0.4) {
       const w = 6 + Math.floor(rand() * 4) * 2;
       const d = 6 + Math.floor(rand() * 3) * 2;
       const r = Math.hypot(w, d) / 2 + 1;
       if (clear(x, z, r + 3) && free(x, z, r)) addChip(x, z, w, d, Math.round(rand() * 4) * (Math.PI / 2));
-    } else if (kind < 0.8) {
+    } else if (kind < 0.66) {
       const h = 2 + rand() * 3;
       if (!clear(x, z, 5) || !free(x, z, 2.5)) continue;
       const can = new THREE.Mesh(new THREE.CylinderGeometry(1.3, 1.3, h, 20), capMat);
