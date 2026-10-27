@@ -10,6 +10,7 @@ export default defineConfig({
       input: {
         index: resolve(import.meta.dirname, 'index.html'),
         deadzone: resolve(import.meta.dirname, 'deadzone.html'),
+        jamkart: resolve(import.meta.dirname, 'jamkart.html'),
         packetracer: resolve(import.meta.dirname, 'packetracer.html'),
         waverider: resolve(import.meta.dirname, 'waverider.html'),
       },

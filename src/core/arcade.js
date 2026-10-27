@@ -29,6 +29,18 @@ const ICONS = {
       <path d="M80 20 L112 60 L80 100 L48 60 Z" />
       <path d="M80 20 L80 100 M48 60 L112 60" class="thin" />
     </svg>`,
+  // A kart with speed lines.
+  jamkart: `
+    <svg viewBox="0 0 120 120" class="icon">
+      <path class="streak s1" d="M4 54 L28 54" />
+      <path class="streak s2" d="M10 68 L28 68" />
+      <path class="streak s3" d="M4 82 L28 82" />
+      <path d="M36 80 L40 62 L66 58 L76 44 L94 44 L98 60 L114 64 L114 80 Z" />
+      <circle cx="52" cy="84" r="9" />
+      <circle cx="100" cy="84" r="9" />
+      <path class="thin" d="M86 44 L86 24" />
+      <circle cx="86" cy="22" r="4" class="dot" />
+    </svg>`,
   // A sine wave threading a slot.
   waverider: `
     <svg viewBox="0 0 120 120" class="icon">
@@ -71,6 +83,7 @@ function template(cfg) {
         <ul class="howto-list">
           ${cfg.howto.map(([k, v]) => `<li><b>${k}</b><span>${v}</span></li>`).join('')}
         </ul>
+        ${cfg.modes ? `<div class="modes" id="modes"></div>` : ''}
         <div class="blink">PRESS START WHEN READY</div>
       </div>
     </div>
@@ -79,7 +92,7 @@ function template(cfg) {
 
     <div id="results" class="screen panel-screen hidden">
       <div class="panel">
-        <h1>${cfg.endTitle}</h1>
+        <h1 id="results-title">${cfg.endTitle}</h1>
         <div class="score-big" id="results-score"></div>
         <table class="stats" id="results-stats"></table>
         <div class="fact"><span>DID YOU KNOW?</span><p id="results-fact"></p></div>
@@ -124,6 +137,13 @@ export function runArcade(cfg) {
   let result = null;
   let entry = null; // { idle } while the name form is up
   let lastRank = -1;
+  let mode = 0; // index into cfg.modes, remembered between rounds
+
+  function renderModes() {
+    $('modes').innerHTML =
+      cfg.modes.map((m, i) => `<span class="${i === mode ? 'on' : ''}">${m}</span>`).join('') +
+      '<div class="hint-small">◀ ▶ to choose</div>';
+  }
 
   const show = (id, on = true) => $(id).classList.toggle('hidden', !on);
   const esc = (s) => String(s).replace(/[&<>"']/g, (c) => `&#${c.charCodeAt(0)};`);
@@ -131,6 +151,7 @@ export function runArcade(cfg) {
   // Soundtrack energy per screen; the round itself can push it higher.
   const MOOD = {
     howto: { intensity: 0.12, bpm: 100 },
+    select: { intensity: 0.2, bpm: 104 },
     countdown: { intensity: 0.3, bpm: 104 },
     play: { intensity: 0.6, bpm: 112 },
     results: { intensity: 0.1, bpm: 96 },
@@ -141,7 +162,7 @@ export function runArcade(cfg) {
     state = next;
     stateTime = 0;
     for (const id of ['title-ui', 'howto', 'countdown', 'results', 'board']) show(id, false);
-    show('game-hud', next === 'countdown' || next === 'play');
+    show('game-hud', next === 'select' || next === 'countdown' || next === 'play');
     const ids = { title: 'title-ui', howto: 'howto', countdown: 'countdown', results: 'results', board: 'board' };
     if (ids[next]) show(ids[next]);
     if (MOOD[next]) music.set(MOOD[next]);
@@ -186,11 +207,13 @@ export function runArcade(cfg) {
     sfx.start();
     flash();
     game = new cfg.Game(view, hud);
+    if (cfg.modes) renderModes();
     setState('howto');
   }
 
   function showResults(r) {
     result = r;
+    $('results-title').textContent = r.title ?? cfg.endTitle;
     $('results-score').textContent = r.score.toLocaleString();
     $('results-stats').innerHTML = r.stats.map(([k, v]) => `<tr><td>${k}</td><td>${v}</td></tr>`).join('');
     $('results-fact').textContent = r.fact;
@@ -300,11 +323,25 @@ export function runArcade(cfg) {
       }
       case 'howto':
         game.update(dt, input, false);
+        if (cfg.modes) {
+          const mx = input.menuX();
+          if (mx && mode + mx >= 0 && mode + mx < cfg.modes.length) {
+            mode += mx;
+            renderModes();
+            sfx.move();
+          }
+        }
         if (input.pressed('back')) startDemo();
         else if (input.pressed('start') && stateTime > 0.5) {
           sfx.select();
-          setState('countdown');
+          if (cfg.modes) game.setMode(mode);
+          setState(game.updateSelect ? 'select' : 'countdown');
         } else if (stateTime > 30) startDemo();
+        break;
+      case 'select':
+        // The game draws its own pick-your-kart screen and says when it's done.
+        if (input.pressed('back')) startDemo();
+        else if (game.updateSelect(dt, input)) setState('countdown');
         break;
       case 'countdown': {
         game.update(dt, input, false);

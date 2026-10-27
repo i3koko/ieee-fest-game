@@ -11,6 +11,11 @@ body[data-game='packetracer'] {
   --accent-rgb: 41, 230, 255;
   --accent2: #ff2fd6;
 }
+body[data-game='jamkart'] {
+  --accent: #9dff3a;
+  --accent-rgb: 157, 255, 58;
+  --accent2: #ffb000;
+}
 body[data-game='waverider'] {
   --accent: #3df5ff;
   --accent-rgb: 61, 245, 255;
@@ -880,4 +885,333 @@ body {
   0% { background-position: 0 0, 0 0; }
   50% { background-position: 0 7px, 11px 0; }
   100% { background-position: 0 -5px, -7px 0; }
+}
+
+/* ------------------------------------------------ mode picker (how-to) */
+
+.modes {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 0.8em;
+  margin-top: 1.2em;
+}
+.modes span {
+  padding: 0.5em 1.2em;
+  border: 2px solid rgba(var(--accent-rgb), 0.3);
+  border-radius: 999px;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  opacity: 0.55;
+}
+.modes span.on {
+  opacity: 1;
+  color: var(--accent);
+  border-color: var(--accent);
+  background: rgba(var(--accent-rgb), 0.14);
+  box-shadow: 0 0 14px rgba(var(--accent-rgb), 0.35);
+}
+.modes .hint-small {
+  flex-basis: 100%;
+  text-align: center;
+}
+
+/* ------------------------------------------------ Jam Kart split screen */
+
+.jk-half {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 50%;
+  overflow: hidden;
+}
+.jk-half.p0 { left: 0; }
+.jk-half.p1 { right: 0; }
+.jk-divider {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 50%;
+  width: 4px;
+  transform: translateX(-50%);
+  background: #000;
+  box-shadow: 0 0 0 1px rgba(var(--accent-rgb), 0.45), 0 0 16px rgba(var(--accent-rgb), 0.3);
+}
+.jk-head {
+  position: absolute;
+  top: 2.2vh;
+  left: 1.8vw;
+  right: 1.8vw;
+  display: flex;
+  align-items: center;
+  gap: 1.2em;
+}
+/* Each half's HUD hugs its outer edge, clear of the timer in the middle. */
+.jk-half.p1 .jk-head { flex-direction: row-reverse; }
+.jk-half.p1 .jk-item { left: auto; right: 1.8vw; flex-direction: row-reverse; }
+.jk-tag {
+  font-weight: 900;
+  letter-spacing: 0.14em;
+}
+.jk-lap {
+  font-weight: 800;
+  font-size: 1.3em;
+  letter-spacing: 0.06em;
+}
+.jk-place {
+  order: -1;
+  font-family: var(--display);
+  font-style: italic;
+  font-size: 3em;
+  line-height: 1;
+}
+.jk-place.first {
+  color: var(--accent);
+  text-shadow: var(--glow);
+}
+.jk-item {
+  position: absolute;
+  top: 11vh;
+  left: 1.8vw;
+  display: flex;
+  align-items: center;
+  gap: 0.7em;
+}
+.jk-item .slot {
+  display: grid;
+  place-items: center;
+  width: 2.4em;
+  height: 2.4em;
+  font-size: 1.7em;
+  font-weight: 900;
+  border: 2px dashed rgba(255, 255, 255, 0.28);
+  border-radius: 12px;
+  background: rgba(0, 0, 0, 0.45);
+}
+.jk-item.full .slot {
+  border-style: solid;
+  border-color: currentColor;
+  box-shadow: 0 0 16px currentColor;
+  animation: item-pop 0.3s ease-out;
+}
+.jk-item .key {
+  font-weight: 800;
+  font-size: 0.85em;
+  letter-spacing: 0.1em;
+  opacity: 0;
+}
+.jk-item.full .key { opacity: 0.85; }
+@keyframes item-pop {
+  0% { transform: scale(0.6); }
+  70% { transform: scale(1.15); }
+}
+.jk-card {
+  position: absolute;
+  left: 50%;
+  bottom: 6vh;
+  width: 70%;
+  padding: 0.7em 1em;
+  transform: translateX(-50%);
+  background: rgba(0, 0, 0, 0.72);
+  border-left: 4px solid var(--accent);
+  border-radius: 6px;
+  opacity: 0;
+  transition: opacity 0.4s;
+}
+.jk-card.show {
+  opacity: 1;
+  transition: none;
+}
+.jk-card b {
+  display: block;
+  font-size: 1.1em;
+  font-weight: 900;
+  letter-spacing: 0.12em;
+}
+.jk-card span {
+  font-size: 0.95em;
+  line-height: 1.4;
+  opacity: 0.92;
+}
+.jk-big {
+  position: absolute;
+  top: 30%;
+  left: 0;
+  right: 0;
+  text-align: center;
+  font-family: var(--display);
+  font-style: italic;
+  font-size: 2.8em;
+  opacity: 0;
+  transition: opacity 0.25s;
+}
+.jk-big.show {
+  opacity: 1;
+  transition: none;
+  animation: item-pop 0.3s ease-out;
+}
+.jk-big.win, .jk-big.go { color: var(--accent); text-shadow: var(--glow); }
+.jk-big.warn { color: #ffb000; text-shadow: 0 0 14px rgba(255, 176, 0, 0.7); }
+.jk-big.bad { color: #ff3b4a; text-shadow: 0 0 14px rgba(255, 59, 74, 0.8); }
+.jk-timer {
+  position: absolute;
+  top: 1.6vh;
+  left: 50%;
+  transform: translateX(-50%);
+  padding: 0.25em 0.8em;
+  font-size: 1.3em;
+  font-weight: 800;
+  font-variant-numeric: tabular-nums;
+  background: #000;
+  border: 1px solid rgba(var(--accent-rgb), 0.45);
+  border-radius: 8px;
+}
+.jk-map {
+  position: absolute;
+  left: 50%;
+  bottom: 2.5vh;
+  width: 13vw;
+  transform: translateX(-50%);
+  padding: 0.6em;
+  background: rgba(0, 0, 0, 0.7);
+  border: 1px solid rgba(var(--accent-rgb), 0.45);
+  border-radius: 10px;
+  overflow: visible;
+}
+.jk-map .road {
+  fill: none;
+  stroke: rgba(255, 160, 48, 0.25);
+  stroke-width: 14;
+  stroke-linejoin: round;
+}
+.jk-map .line {
+  fill: none;
+  stroke: #ffa030;
+  stroke-width: 2.5;
+}
+.jk-map circle {
+  stroke: #000;
+  stroke-width: 2;
+}
+
+/* ------------------------------------------------ Jam Kart kart select */
+
+.jk-select {
+  position: absolute;
+  left: 50%;
+  bottom: 4vh;
+  width: min(88%, 34em);
+  padding: 1em 1.3em;
+  transform: translateX(-50%);
+  background: rgba(4, 8, 10, 0.82);
+  border: 2px solid rgba(var(--accent-rgb), 0.35);
+  border-radius: 14px;
+  text-align: center;
+  display: none;
+}
+.selecting .jk-select { display: block; }
+.selecting .jk-head,
+.selecting .jk-item,
+.selecting .jk-card,
+.selecting .jk-timer,
+.selecting .jk-map { display: none; }
+.jk-half.is-ready .jk-select { border-color: var(--accent); box-shadow: 0 0 18px rgba(var(--accent-rgb), 0.35); }
+.jk-sel-who {
+  font-weight: 900;
+  letter-spacing: 0.16em;
+}
+.jk-sel-model {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  gap: 0.8em;
+  margin: 0.15em 0;
+}
+.jk-sel-model b {
+  min-width: 6.5em;
+  font-family: var(--display);
+  font-style: italic;
+  font-size: 2.3em;
+  color: var(--accent);
+  text-shadow: var(--glow);
+}
+.jk-sel-model span {
+  font-size: 1.4em;
+  opacity: 0.7;
+}
+.jk-half.is-ready .jk-sel-model span { visibility: hidden; }
+.jk-sel-blurb {
+  font-size: 0.95em;
+  opacity: 0.9;
+}
+.jk-sel-stats {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0.3em 1.4em;
+  margin: 0.7em 0 0.5em;
+  text-align: left;
+}
+.jk-sel-stats div {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.6em;
+  font-size: 0.78em;
+  font-weight: 800;
+  letter-spacing: 0.12em;
+}
+.jk-sel-stats i {
+  display: flex;
+  gap: 3px;
+}
+.jk-sel-stats b {
+  width: 1.4em;
+  height: 0.6em;
+  border-radius: 2px;
+  background: var(--accent);
+  box-shadow: 0 0 6px rgba(var(--accent-rgb), 0.6);
+}
+.jk-sel-stats b.off {
+  background: rgba(255, 255, 255, 0.14);
+  box-shadow: none;
+}
+.jk-sel-perk {
+  font-size: 0.9em;
+}
+.jk-sel-perk b {
+  margin-right: 0.4em;
+  color: var(--accent);
+  letter-spacing: 0.14em;
+}
+.jk-sel-colors {
+  display: flex;
+  justify-content: center;
+  gap: 0.55em;
+  margin: 0.75em 0 0.6em;
+}
+.jk-sel-colors i {
+  width: 1.5em;
+  height: 1.5em;
+  border-radius: 50%;
+  border: 2px solid rgba(0, 0, 0, 0.6);
+  opacity: 0.55;
+}
+.jk-sel-colors i.on {
+  opacity: 1;
+  border-color: #fff;
+  transform: scale(1.25);
+  box-shadow: 0 0 12px rgba(255, 255, 255, 0.6);
+}
+.jk-sel-ready {
+  font-size: 0.85em;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  opacity: 0.85;
+}
+.jk-sel-ready b { color: var(--accent); }
+.jk-sel-ready .go {
+  font-size: 1.5em;
+  font-weight: 900;
+  color: var(--accent);
+  text-shadow: var(--glow);
 }
