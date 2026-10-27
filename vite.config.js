@@ -11,6 +11,7 @@ export default defineConfig({
         index: resolve(import.meta.dirname, 'index.html'),
         deadzone: resolve(import.meta.dirname, 'deadzone.html'),
         jamkart: resolve(import.meta.dirname, 'jamkart.html'),
+        jamkartgp: resolve(import.meta.dirname, 'jamkartgp.html'),
         packetracer: resolve(import.meta.dirname, 'packetracer.html'),
         waverider: resolve(import.meta.dirname, 'waverider.html'),
       },

@@ -16,6 +16,11 @@ body[data-game='jamkart'] {
   --accent-rgb: 157, 255, 58;
   --accent2: #ffb000;
 }
+body[data-game='jamkartgp'] {
+  --accent: #ff4a3d;
+  --accent-rgb: 255, 74, 61;
+  --accent2: #ffffff;
+}
 body[data-game='waverider'] {
   --accent: #3df5ff;
   --accent-rgb: 61, 245, 255;

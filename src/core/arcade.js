@@ -59,7 +59,7 @@ function template(cfg) {
       <div class="brand">IEEE FEST <span>·</span> ComSoc AUS Student Branch</div>
       <div class="title-main">
         <div class="logo">
-          ${ICONS[cfg.id]}
+          ${ICONS[cfg.icon ?? cfg.id]}
           <h1>${cfg.logoLines.map((l) => `<span>${l}</span>`).join('')}</h1>
         </div>
         <p class="tagline">${cfg.tagline}</p>
