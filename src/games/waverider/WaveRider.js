@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { beep, noise } from '../../core/audio.js';
+import { beep, noise, sfx } from '../../core/audio.js';
 import { createWaveVoice, waveSfx } from './sounds.js';
 import { music } from '../../core/music.js';
 import { W, H, AMP_UNIT, F_MIN, F_MAX, A_MIN, A_MAX, sampleWave, Ribbon, slotGeometries } from './wave.js';
@@ -19,6 +19,9 @@ const PERFECT_HEAL = 2;
 const FRAME_EVERY = 14;
 const FRAME_COUNT = 14;
 const DEMO_PACE = 20; // seconds into a run that the title demo stays at
+const NOISE_FROM = 35; // seconds in before walls start arriving inside noise clouds
+const NOISE_CHANCE = 0.3;
+const LEVEL_EVERY = 20; // seconds per difficulty level callout
 const REPEAT_DELAY = 0.28;
 const REPEAT_EVERY = 0.11;
 const WAVE_POINTS = 120;
@@ -251,13 +254,30 @@ export class WaveRider {
       edge.mesh.position.z = 0.02;
       group.add(edge.mesh);
     }
-    const label = makeLabel(`${f} Hz · ${a} V`, '#ff8be8');
+    // Later in a run some walls arrive inside a noise cloud: the label is
+    // scrambled, so you have to read the gap's shape instead.
+    const noisy = !this.demo && this.elapsed > NOISE_FROM && Math.random() < NOISE_CHANCE;
+    const label = makeLabel(noisy ? '? Hz · ? V' : `${f} Hz · ${a} V`, noisy ? '#ffffff' : '#ff8be8');
     label.position.set(0, H / 2 + 0.9, 0);
     group.add(label);
+    let cloud = null;
+    if (noisy) {
+      const n = 260;
+      const pos = new Float32Array(n * 3);
+      for (let k = 0; k < n; k++) {
+        pos[k * 3] = (Math.random() - 0.5) * W * 1.1;
+        pos[k * 3 + 1] = (Math.random() - 0.5) * H * 0.9;
+        pos[k * 3 + 2] = (Math.random() - 0.5) * 6;
+      }
+      const geo = new THREE.BufferGeometry();
+      geo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+      cloud = new THREE.Points(geo, new THREE.PointsMaterial({ color: 0xffffff, size: 0.18, transparent: true, opacity: 0.6, depthWrite: false }));
+      group.add(cloud);
+    }
 
     group.position.z = z;
     this.scene.add(group);
-    this.walls.push({ group, f, a, z, judged: false, result: null, fade: 0, panelMat, edgeMat, label });
+    this.walls.push({ group, f, a, z, judged: false, result: null, fade: 0, panelMat, edgeMat, label, noisy, cloud });
   }
 
   // ---------------------------------------------------------------- HUD
@@ -305,11 +325,19 @@ export class WaveRider {
     this.popupT = 0.75;
   }
 
+  // Swap the top hint line for a short message.
+  #hint(html, secs) {
+    if (!this.ui) return;
+    this.ui.hint.innerHTML = html;
+    this.hintT = secs;
+  }
+
   // Popup and static timers run on game time so they pause with the game.
   #tickOverlays(dt) {
     if (!this.ui) return;
     if (this.popupT > 0 && (this.popupT -= dt) <= 0) this.ui.popup.classList.remove('show');
     if (this.staticT > 0 && (this.staticT -= dt) <= 0) this.ui.static.classList.remove('on');
+    if (this.hintT > 0) this.hintT -= dt;
   }
 
   // ---------------------------------------------------------------- loop
@@ -329,6 +357,17 @@ export class WaveRider {
       // The soundtrack builds with the run and with your combo.
       if (!this.demo) {
         music.set({ intensity: 0.45 + this.elapsed / 100 + Math.min(this.combo, 10) * 0.025, bpm: 108 + Math.min(this.elapsed, 90) * 0.22 });
+        const level = Math.floor(this.elapsed / LEVEL_EVERY) + 1;
+        if (level > (this.level ?? 1)) {
+          this.level = level;
+          this.#hint(`LEVEL ${level} · SPEED UP`, 1.6);
+          sfx.checkpoint();
+        }
+        const next = this.walls.find((w) => !w.judged);
+        if (next?.noisy && !this.noiseSeen) {
+          this.noiseSeen = true;
+          this.#hint('NOISE! THE LABEL IS SCRAMBLED, SO MATCH THE <b>SHAPE</b> OF THE GAP', 3.5);
+        }
         // Nearly off the air: a heartbeat that quickens as signal drops.
         if (this.signal < 35 && (this.beatT -= dt) <= 0) {
           waveSfx.heartbeat();
@@ -445,6 +484,13 @@ export class WaveRider {
       w.z += dz;
       w.group.position.z = w.z;
       if (!w.judged && w.z >= 0) this.#judge(w);
+      if (w.cloud) {
+        // Static: the motes jump to new spots every frame.
+        const p = w.cloud.geometry.attributes.position;
+        for (let k = 0; k < p.count; k += 3) p.setXYZ(k, (Math.random() - 0.5) * W * 1.1, (Math.random() - 0.5) * H * 0.9, (Math.random() - 0.5) * 6);
+        p.needsUpdate = true;
+        w.cloud.material.opacity = w.result ? 0 : 0.4 + Math.random() * 0.4;
+      }
       // Passed walls get out of the way fast so they never wash the screen.
       if (w.result) {
         w.fade += dt;
@@ -485,10 +531,11 @@ export class WaveRider {
       this.bestCombo = Math.max(this.bestCombo, this.combo);
       this.perfects++;
       const mult = Math.min(this.combo, 10);
-      const pts = 100 * mult;
+      const pts = 100 * mult * (w.noisy ? 2 : 1);
       this.score += pts;
       this.signal = Math.min(START_SIGNAL, this.signal + PERFECT_HEAL);
-      this.#popup('PERFECT', `+${pts}${mult > 1 ? `  ×${mult} COMBO` : ''}`, 'good');
+      if (w.noisy) this.decodes = (this.decodes ?? 0) + 1;
+      this.#popup(w.noisy ? 'CLEAN DECODE!' : 'PERFECT', `+${pts}${mult > 1 ? `  ×${mult} COMBO` : ''}`, 'good');
       this.#burst(CYAN);
       if (!this.demo) {
         // Two notes from the chord the soundtrack is on, climbing with the combo.
@@ -614,11 +661,11 @@ export class WaveRider {
     ui.signal.parentElement.classList.toggle('low', this.signal < 35);
     ui.combo.textContent = `×${this.combo}`;
     ui.speed.textContent = `${(Math.max(this.speed, START_SPEED) / START_SPEED).toFixed(1)}×`;
-    ui.hint.style.opacity = this.elapsed < 7 ? 1 : 0;
+    ui.hint.style.opacity = this.elapsed < 7 || this.hintT > 0 ? 1 : 0;
 
     const next = this.walls.find((w) => !w.judged);
     ui.you.textContent = `${this.f} Hz · ${this.a} V`;
-    ui.next.textContent = next ? `${next.f} Hz · ${next.a} V` : '';
+    ui.next.textContent = next ? (next.noisy ? '? Hz · ? V' : `${next.f} Hz · ${next.a} V`) : '';
     const match = next && next.f === this.f && next.a === this.a;
     ui.you.parentElement.classList.toggle('match', !!match);
     this.#drawScope(next);
@@ -662,6 +709,7 @@ export class WaveRider {
     };
     if (next) {
       const tp = sampleWave(next.f, next.a, 90);
+      if (next.noisy) for (const p of tp) p[1] += (Math.random() - 0.5) * 0.9;
       trace(tp, 'rgba(255, 63, 210, 0.35)', GAP * 2 * sy);
       trace(tp, '#ff8be8', 2, [6, 5]);
     }
@@ -674,6 +722,7 @@ export class WaveRider {
       stats: [
         ['Perfect matches', this.perfects],
         ['Best combo', `×${this.bestCombo}`],
+        ['Noisy signals decoded', this.decodes ?? 0],
         ['Close calls', this.closes],
         ['Blocked', this.blocks],
         ['Top speed', `${(this.topSpeed / START_SPEED).toFixed(1)}×`],

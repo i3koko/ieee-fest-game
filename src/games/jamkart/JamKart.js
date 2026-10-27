@@ -613,6 +613,12 @@ export class JamKart {
       this.#animateKart(k, dt);
       if (k.human) this.#placeCamera(k, dt);
     }
+    // A kart right on top of a chase camera would fill the screen; hide it.
+    const cams = this.karts.filter((k) => k.human).map((k) => k.cam.position);
+    for (const k of this.karts) {
+      if (k.human) continue;
+      k.parts.group.visible = !cams.some((c) => (c.x - k.x) ** 2 + (c.y - k.y - 1) ** 2 + (c.z - k.z) ** 2 < 4.2 ** 2);
+    }
     this.board.update(this.time);
     for (const l of this.board.lights) l.mat.color.copy(l.base).multiplyScalar(0.6 + 0.4 * Math.sin(this.time * 3 + l.phase));
 
