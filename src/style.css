@@ -1215,3 +1215,80 @@ body {
   color: var(--accent);
   text-shadow: var(--glow);
 }
+
+/* ------------------------------------------------ Jam Kart: 8 racers */
+
+/* One player gets the whole screen. */
+.solo .jk-half.p0 { width: 100%; }
+.solo .jk-half.p1,
+.solo .jk-divider { display: none; }
+.solo .jk-map {
+  left: auto;
+  right: 2vw;
+  transform: none;
+}
+.jk-board {
+  position: absolute;
+  left: 50%;
+  bottom: calc(2.5vh + 13vw * 0.62 + 1.6em);
+  transform: translateX(-50%);
+  margin: 0;
+  padding: 0.5em 0.8em 0.5em 2.2em;
+  font-size: 0.8em;
+  font-weight: 800;
+  letter-spacing: 0.06em;
+  background: rgba(0, 0, 0, 0.6);
+  border-radius: 8px;
+}
+.solo .jk-board {
+  left: 1.8vw;
+  top: 22vh;
+  bottom: auto;
+  transform: none;
+}
+.selecting .jk-board { display: none; }
+.jk-board li {
+  display: flex;
+  align-items: center;
+  gap: 0.5em;
+  padding: 0.08em 0;
+  opacity: 0.75;
+}
+.jk-board li.human {
+  opacity: 1;
+  color: var(--accent);
+}
+.jk-board li i {
+  width: 0.7em;
+  height: 0.7em;
+  border-radius: 50%;
+}
+.jk-map circle.human {
+  stroke: #fff;
+  stroke-width: 3;
+}
+.jk-drift {
+  position: absolute;
+  left: 50%;
+  bottom: 22vh;
+  width: 10em;
+  height: 0.5em;
+  transform: translateX(-50%);
+  border-radius: 4px;
+  background: rgba(255, 255, 255, 0.12);
+  overflow: hidden;
+  opacity: 0;
+  transition: opacity 0.2s;
+}
+.jk-drift.on { opacity: 1; }
+.jk-drift i {
+  display: block;
+  height: 100%;
+  width: 0;
+  background: #6ad8ff;
+  box-shadow: 0 0 10px #6ad8ff;
+}
+.jk-drift.hot i {
+  background: #ff9a1f;
+  box-shadow: 0 0 12px #ff9a1f;
+}

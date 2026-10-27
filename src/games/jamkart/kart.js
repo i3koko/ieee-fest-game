@@ -9,25 +9,25 @@ export const MODELS = [
     blurb: 'Light through glass: the fastest kart, but it takes wide turns.',
     perk: 'Compression boost lasts 50% longer',
     stats: { SPEED: 5, HANDLING: 2, ACCEL: 3, WEIGHT: 2 },
-    top: 47, turn: 2.0, accel: 25, mass: 1, boost: 1.5, recover: 1, jamRange: 1,
+    top: 47, turn: 2.0, accel: 25, mass: 1, grip: 13, boost: 1.5, recover: 1, jamRange: 1,
   },
   {
     id: '5g', name: '5G', file: 'kart-5g.glb',
     blurb: 'Small and nimble: sharp turns and the quickest start.',
     perk: 'Shakes off jams and spins 40% faster',
     stats: { SPEED: 3, HANDLING: 5, ACCEL: 5, WEIGHT: 1 },
-    top: 43, turn: 2.75, accel: 32, mass: 0.8, boost: 1, recover: 0.6, jamRange: 1,
+    top: 43, turn: 2.75, accel: 32, mass: 0.8, grip: 18, boost: 1, recover: 0.6, jamRange: 1,
   },
   {
     id: 'satellite', name: 'SATELLITE', file: 'kart-satellite.glb',
     blurb: 'Heavy and steady: slow to get going, but it wins every shove.',
     perk: 'Its jammer reaches 1.6× further',
     stats: { SPEED: 4, HANDLING: 3, ACCEL: 2, WEIGHT: 5 },
-    top: 45, turn: 2.2, accel: 21, mass: 1.8, boost: 1, recover: 1, jamRange: 1.6,
+    top: 45, turn: 2.2, accel: 21, mass: 1.8, grip: 15, boost: 1, recover: 1, jamRange: 1.6,
   },
 ];
 
-export const PALETTE = [0x3df5ff, 0xff9a1f, 0xff3fd2, 0x9dff3a, 0xffe03d, 0xff3b4a, 0xf4f6ff];
+export const PALETTE = [0x3df5ff, 0xff9a1f, 0xff3fd2, 0x9dff3a, 0xffe03d, 0xff3b4a, 0xf4f6ff, 0x8a7dff];
 
 const templates = {};
 
@@ -106,6 +106,11 @@ export function makeKart(modelId, color) {
     o.material = [].concat(o.material).map((m) => {
       const c = m.clone();
       if (/^Paint/.test(c.name)) paint.push(c);
+      // Polished metal mirrors the lights into a bloom blob; dull it a little.
+      if (/^Metal/.test(c.name)) {
+        c.roughness = 0.55;
+        c.color.multiplyScalar(0.6);
+      }
       const inWheel = o.name.startsWith('Wheel') || o.parent?.name.startsWith('Wheel');
       if (/^Glow/.test(c.name)) (inWheel ? hubs : glow).push(c);
       return c;
