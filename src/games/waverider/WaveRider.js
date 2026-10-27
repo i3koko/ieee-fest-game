@@ -17,6 +17,7 @@ const BLOCK_COST = 34;
 const PERFECT_HEAL = 2;
 const FRAME_EVERY = 14;
 const FRAME_COUNT = 14;
+const DEMO_PACE = 20; // seconds into a run that the title demo stays at
 const REPEAT_DELAY = 0.28;
 const REPEAT_EVERY = 0.11;
 const WAVE_POINTS = 120;
@@ -317,7 +318,9 @@ export class WaveRider {
     this.#applySteps(dx, dy);
 
     if (live) {
-      this.elapsed += dt;
+      // The title-screen demo cruises at an early-game pace forever instead of
+      // ramping up the way a real run does.
+      this.elapsed = this.demo ? Math.min(this.elapsed + dt, DEMO_PACE) : this.elapsed + dt;
       this.speed = Math.min(START_SPEED + this.elapsed * SPEED_RAMP, MAX_SPEED);
       this.topSpeed = Math.max(this.topSpeed, this.speed);
       // The soundtrack builds up and speeds up with the run.
