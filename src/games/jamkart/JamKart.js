@@ -1,5 +1,6 @@
 import * as THREE from 'three';
-import { beep, noise, createTone, sfx } from '../../core/audio.js';
+import { sfx } from '../../core/audio.js';
+import { createEngine, kartSfx } from './sounds.js';
 import { music } from '../../core/music.js';
 import { TRACK_W, SAMPLES, FOG, buildTrack, buildBoard, locate, ahead, groundAt, surfaceY, gateHeight } from './track.js';
 import { makeKart, MODELS, PALETTE } from './kart.js';
@@ -131,7 +132,7 @@ export class JamKart {
       this.#placeDemoCam(1);
     } else {
       this.#buildHud();
-      this.engines = [0, 1].map(() => createTone('triangle'));
+      this.engines = [null, null]; // made once each player's kart is chosen
       this.#useCameras();
     }
   }
@@ -522,6 +523,7 @@ export class JamKart {
       k.cam.lookAt(k.x, k.y + 0.9, k.z);
     });
     this.board.update(this.time);
+    this.#updateAudio(false);
     this.view.render();
 
     const done = this.karts.every((k) => !k.human || k.ready) || this.selectT > SELECT_TIMEOUT;
@@ -657,7 +659,7 @@ export class JamKart {
       k.vy = 4;
       k.air = true;
       k.airT = 0;
-      if (k.human) beep(300, 0.08, { type: 'triangle', vol: 0.05, slide: 200 });
+      if (k.human) kartSfx.hop();
     }
     if (k.driftDir && (Math.abs(steerIn) < 0.15 || vf < 14 || k.spinT > 0 || !live)) k.driftDir = 0;
     const drifting = !!k.driftDir;
@@ -710,7 +712,7 @@ export class JamKart {
     } else if (k.wasDrifting) {
       if (k.driftCharge > 0.8) {
         k.boostT = Math.max(k.boostT, k.driftCharge > 1.6 ? 1.1 : 0.6);
-        if (k.human) beep(k.driftCharge > 1.6 ? 880 : 660, 0.15, { type: 'square', vol: 0.05, slide: 400 });
+        if (k.human) kartSfx.turbo(k.driftCharge > 1.6);
       }
       k.driftCharge = 0;
     }
@@ -760,7 +762,7 @@ export class JamKart {
       const off = wrapAngle(k.h - trackH);
       if (Math.abs(off) < Math.PI / 2) k.h -= off * Math.min(dt * 3, 1);
       if (speed > 10 && Math.random() < 0.6) this.#spark(k.x + nx * 1.2, k.y + 0.5, k.z + nz * 1.2, 0xffc060, 2, 7);
-      if (k.scrapeT <= 0 && k.human && live && speed > 10) noise(0.12, 0.05);
+      if (k.scrapeT <= 0 && k.human && live && speed > 10) kartSfx.scrape();
       k.scrapeT = 0.15;
     }
 
@@ -813,10 +815,7 @@ export class JamKart {
     }
     if (impact > 8) {
       this.#spark(k.x, k.y + 0.2, k.z, 0xffffff, 10, 7);
-      if (k.human) {
-        noise(0.18, 0.09);
-        beep(70, 0.2, { type: 'sine', vol: 0.12, slide: -30 });
-      }
+      if (k.human) kartSfx.land(impact > 14);
     }
     k.airT = 0;
   }
@@ -836,7 +835,7 @@ export class JamKart {
       this.#card(k, HAZARD_INFO[zn.type]);
     }
     if (zn.type === 'boost') {
-      if (k.boostT < 0.3 && k.human) beep(520, 0.25, { type: 'sawtooth', vol: 0.04, slide: 700 });
+      if (k.boostT < 0.3 && k.human) kartSfx.boostPad();
       k.boostT = Math.max(k.boostT, 0.9);
     } else if (zn.type === 'emi') {
       k.emiT = 0.25;
@@ -892,12 +891,12 @@ export class JamKart {
       k.finalPlace = this.karts.filter((o) => o.finished).length - 1;
       if (k.human) {
         this.#big(k, `FINISH! ${ORDINAL[k.finalPlace]}`, k.finalPlace === 0 ? 'win' : k.finalPlace < 3 ? 'go' : '', 99);
-        [523, 659, 784, 1047].forEach((f, n) => beep(f, 0.2, { when: n * 0.1, type: 'triangle', vol: 0.08 }));
+        kartSfx.finish(k.finalPlace);
       }
     } else if (k.human) {
       const final = k.lap === LAPS - 1;
       this.#big(k, final ? 'FINAL LAP!' : `LAP ${k.lap + 1}`, final ? 'warn' : '', 1.4);
-      sfx.checkpoint();
+      kartSfx.lap(final);
     }
   }
 
@@ -930,7 +929,7 @@ export class JamKart {
           B.vz += (j / B.spec.mass) * nz;
           if (-rel > 6) {
             this.#spark((A.x + B.x) / 2, A.y + 0.8, (A.z + B.z) / 2, 0xffffff, 6, 6);
-            if ((A.human || B.human) && !this.demo) beep(140, 0.1, { type: 'square', vol: 0.06, slide: -60 });
+            if ((A.human || B.human) && !this.demo) kartSfx.bump();
           }
         }
       }
@@ -944,7 +943,7 @@ export class JamKart {
       return b.prog - a.prog;
     });
     order.forEach((k, n) => {
-      if (k.human && !this.demo && k.place !== undefined && n < k.place && this.raceTime > 3) beep(1180, 0.06, { type: 'sine', vol: 0.04 });
+      if (k.human && !this.demo && k.place !== undefined && n < k.place && this.raceTime > 3) kartSfx.overtake();
       k.place = n;
     });
     this.order = order;
@@ -968,7 +967,7 @@ export class JamKart {
         else k.item = got;
         k.cpuDelay = 0.8 + Math.random() * 2;
         if (k.human) {
-          sfx.pickup();
+          kartSfx.pickup();
           this.#card(k, ITEMS[got]);
         }
         break;
@@ -991,21 +990,18 @@ export class JamKart {
     const loud = !this.demo && k.human;
     if (item === 'compress') {
       k.boostT = BOOST_TIME * k.spec.boost;
-      if (loud) sfx.boost();
+      if (loud) kartSfx.compress();
       this.#big(k, 'COMPRESSED!', 'go', 0.8);
     } else if (item === 'shield') {
       k.shieldT = SHIELD_TIME;
-      if (loud) sfx.shield();
+      if (loud) kartSfx.shield();
     } else if (item === 'firewall') {
       this.#dropWall(k);
-      if (loud) beep(110, 0.25, { type: 'square', vol: 0.07, slide: -40 });
+      if (loud) kartSfx.firewall();
     } else if (item === 'jammer') {
       const range = JAM_RANGE * k.spec.jamRange;
       this.#ring(k, range);
-      if (loud) {
-        noise(0.4, 0.08);
-        beep(1400, 0.4, { type: 'sawtooth', vol: 0.03, slide: -1200 });
-      }
+      if (loud) kartSfx.jammer();
       const victims = this.karts.filter((o) => o !== k && Math.hypot(o.x - k.x, o.z - k.z) <= range);
       for (const o of victims) this.#hit(o, 'jam', k);
       if (k.human) this.#big(k, victims.length ? `JAMMED ${victims.length}!` : 'OUT OF RANGE', victims.length ? 'go' : 'warn', 1.2);
@@ -1016,20 +1012,21 @@ export class JamKart {
     if (k.shieldT > 0) {
       k.shieldT = 0;
       this.#big(k, 'ECC REPAIRED IT!', 'go', 1.2);
-      if (k.human) sfx.shield();
+      if (k.human) kartSfx.shieldBlock();
       return;
     }
     if (by !== k) by.hits++;
     if (type === 'jam') {
       k.jamT = JAM_TIME * k.spec.recover;
       this.#big(k, 'JAMMED!', 'bad', k.jamT);
+      if (k.human) kartSfx.jammed();
     } else {
       k.spinT = SPIN_TIME * k.spec.recover * (type === 'gate' ? 0.4 : 1);
       k.vx *= 0.35;
       k.vz *= 0.35;
       this.#spark(k.x, k.y + 1, k.z, 0xff5a3d, 14, 8);
       this.#big(k, type === 'gate' ? 'CLOCK GATE!' : 'BLOCKED BY FIREWALL', 'bad', 1.2);
-      if (k.human) sfx.hit();
+      if (k.human) (type === 'gate' ? kartSfx.gate : kartSfx.crash)();
     }
   }
 
@@ -1235,12 +1232,21 @@ export class JamKart {
   #updateAudio(live) {
     const lead = Math.max(...this.karts.map((k) => k.lap));
     if (live && !this.endTimer) {
-      music.set({ intensity: [0.55, 0.7, 0.92][clamp(lead, 0, LAPS - 1)], bpm: 118 + clamp(lead, 0, 2) * 7 });
+      music.set({ intensity: [0.55, 0.72, 0.92][clamp(lead, 0, LAPS - 1)], bpm: 110 + clamp(lead, 0, 2) * 5 });
     }
     [0, 1].forEach((i) => {
       const k = this.karts[i];
-      const vol = k.human && live ? 0.012 + Math.abs(k.v) * 0.0002 : 0;
-      this.engines[i].set(45 + Math.abs(k.v) * 1.6 + (k.boostT > 0 ? 25 : 0) + i * 6, vol);
+      if (!k.human) return;
+      // Each player hears their own kart's engine (rebuilt if they swapped).
+      if (this.engines[i]?.model !== k.spec.id) {
+        this.engines[i]?.stop();
+        this.engines[i] = createEngine(k.spec.id);
+        if (this.engines[i]) this.engines[i].model = k.spec.id;
+      }
+      this.engines[i]?.update({
+        speed: k.v, top: k.spec.top, slip: k.vl, drifting: !!k.driftDir, boost: k.boostT > 0,
+        air: k.air && !k.driftDir, jammed: k.jamT > 0, on: true,
+      });
     });
   }
 
@@ -1258,6 +1264,9 @@ export class JamKart {
 
   #result() {
     this.#rank();
+    // The results screen stops calling update(), so silence the engines now.
+    this.engines.forEach((e) => e?.stop());
+    this.engines = [null, null];
     const humans = this.karts.filter((k) => k.human);
     const best = [...humans].sort((a, b) => this.#score(b) - this.#score(a))[0];
     const ord = (k) => ORDINAL[this.#finalPlace(k)];
@@ -1295,7 +1304,7 @@ export class JamKart {
   }
 
   dispose() {
-    this.engines?.forEach((e) => e.stop());
+    this.engines?.forEach((e) => e?.stop());
     if (this.hudRoot) this.hudRoot.innerHTML = '';
     this.scene.traverse((o) => {
       o.geometry?.dispose();

@@ -22,4 +22,5 @@ runArcade({
   ],
   modes: ['1 PLAYER · VS CPU', '2 PLAYERS'],
   endTitle: 'RACE OVER',
+  song: 'drive',
 });

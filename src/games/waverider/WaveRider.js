@@ -1,5 +1,6 @@
 import * as THREE from 'three';
-import { beep, noise, createTone } from '../../core/audio.js';
+import { beep, noise } from '../../core/audio.js';
+import { createWaveVoice, waveSfx } from './sounds.js';
 import { music } from '../../core/music.js';
 import { W, H, AMP_UNIT, F_MIN, F_MAX, A_MIN, A_MAX, sampleWave, Ribbon, slotGeometries } from './wave.js';
 
@@ -115,7 +116,8 @@ export class WaveRider {
     this.#buildWorld();
     this.#buildPlayer();
     if (!demo) this.#buildHud();
-    this.tone = demo ? null : createTone();
+    this.tone = demo ? null : createWaveVoice();
+    this.beatT = 0;
     this.#spawnWall(FIRST_WALL_Z);
 
     view.use(this.scene, this.camera, { strength: 0.55, radius: 0.4, threshold: 0.5 });
@@ -324,7 +326,15 @@ export class WaveRider {
       this.speed = Math.min(START_SPEED + this.elapsed * SPEED_RAMP, MAX_SPEED);
       this.topSpeed = Math.max(this.topSpeed, this.speed);
       // The soundtrack builds up and speeds up with the run.
-      if (!this.demo) music.set({ intensity: 0.45 + this.elapsed / 100, bpm: 108 + Math.min(this.elapsed, 90) * 0.22 });
+      // The soundtrack builds with the run and with your combo.
+      if (!this.demo) {
+        music.set({ intensity: 0.45 + this.elapsed / 100 + Math.min(this.combo, 10) * 0.025, bpm: 108 + Math.min(this.elapsed, 90) * 0.22 });
+        // Nearly off the air: a heartbeat that quickens as signal drops.
+        if (this.signal < 35 && (this.beatT -= dt) <= 0) {
+          waveSfx.heartbeat();
+          this.beatT = 0.45 + this.signal / 60;
+        }
+      }
     } else {
       this.speed = 0;
     }
@@ -465,6 +475,7 @@ export class WaveRider {
 
   #judge(w) {
     w.judged = true;
+    if (!this.demo) waveSfx.whoosh(this.speed / START_SPEED);
     const df = this.f - w.f;
     const da = this.a - w.a;
     const err = Math.abs(df) + Math.abs(da);
@@ -486,6 +497,7 @@ export class WaveRider {
         const k = Math.min(this.combo - 1, 5);
         beep(note(k), 0.1, { type: 'triangle', vol: 0.07 });
         beep(note(k + 1), 0.16, { type: 'triangle', vol: 0.06, when: 0.07 });
+        if (this.combo % 5 === 0) waveSfx.sparkle(tones);
       }
       return;
     }
@@ -581,7 +593,7 @@ export class WaveRider {
     if (!this.tone) return;
     this.toneBoost = Math.max(0, this.toneBoost - dt * 1.5);
     const vol = live ? (0.006 + 0.005 * this.a) * (0.35 + this.toneBoost) : 0;
-    this.tone.set(NOTE[this.f], vol);
+    this.tone.set(NOTE[this.f], vol, this.a);
   }
 
   #placeCamera(dt) {

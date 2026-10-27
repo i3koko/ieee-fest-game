@@ -1,5 +1,7 @@
-// Procedural synthwave soundtrack, played live through WebAudio (no files).
-// Am - F - C - G, one bar each. Layers come in as `intensity` rises:
+// Procedural soundtracks, played live through WebAudio (no files). Each game
+// picks a song; layers come in as the game raises `intensity`.
+//
+// 'synthwave' (Wave Rider): Am - F - C - G, one bar each.
 //   0+    pad chords and a held bass note
 //   0.15  pulsing eighth-note bass
 //   0.2   off-beat hi-hats
@@ -9,6 +11,9 @@
 //   0.65  sixteenth hi-hats
 //   0.75  lead melody
 // A minor pentatonic matches Wave Rider's wave notes (A C D E G).
+//
+// 'drive' (Jam Kart): a breakbeat racer in E minor, Em - C - D - B, with a
+// wobbling reese bass, offbeat chord stabs, a pluck arpeggio and a lead hook.
 import { audioOut } from './audio.js';
 
 const CHORDS = [
@@ -26,6 +31,21 @@ const MELODY = [
   [3, 0, 74, 6], [3, 6, 71, 2], [3, 8, 74, 4], [3, 12, 79, 4],
 ];
 
+const DRIVE_CHORDS = [
+  { root: 40, tones: [64, 67, 71] }, // Em
+  { root: 36, tones: [64, 67, 72] }, // C
+  { root: 38, tones: [62, 66, 69] }, // D
+  { root: 35, tones: [63, 66, 71] }, // B
+];
+const DRIVE_HOOK = [
+  [0, 0, 76, 3], [0, 3, 79, 3], [0, 6, 78, 2], [0, 8, 76, 2], [0, 10, 74, 2], [0, 12, 71, 4],
+  [1, 0, 72, 3], [1, 3, 76, 3], [1, 6, 79, 2], [1, 8, 84, 4], [1, 12, 83, 4],
+  [2, 0, 81, 3], [2, 3, 78, 3], [2, 6, 74, 2], [2, 8, 76, 2], [2, 10, 78, 2], [2, 12, 81, 4],
+  [3, 0, 83, 6], [3, 6, 78, 2], [3, 8, 75, 4], [3, 12, 71, 4],
+];
+// Bass rhythm for the drive song: [step, semitones above the root].
+const REESE = [[0, 0], [3, 0], [6, 12], [8, 0], [11, 7], [14, 12]];
+
 const VOLUME = 0.55;
 const LOOKAHEAD = 0.12; // seconds of notes scheduled ahead of the clock
 const midiHz = (m) => 440 * 2 ** ((m - 69) / 12);
@@ -39,6 +59,9 @@ let bpm = 104;
 let targetBpm = 104;
 let intensity = 0.1;
 let chord = CHORDS[0];
+let song = 'synthwave';
+// The drive song runs faster for the same requested tempo.
+const TEMPO = { synthwave: 1, drive: 1.28 };
 
 function build() {
   const { ctx, master } = audioOut();
@@ -191,7 +214,74 @@ function lead(t, midi, dur) {
   g.connect(verb);
 }
 
-function schedule(s, t) {
+// Detuned saw pair with a slow filter wobble: the drum'n'bass "reese".
+function reese(t, midi, dur) {
+  const f = filter('lowpass', 300, 6);
+  const wob = osc('sine', 2.2 + intensity * 2, t, dur);
+  const depth = ac.createGain();
+  depth.gain.value = 180 + intensity * 400;
+  wob.connect(depth).connect(f.frequency);
+  const g = env(t, 0.16, 0.01, dur);
+  for (const d of [-14, 14]) osc('sawtooth', midiHz(midi), t, dur, d).connect(f);
+  osc('sine', midiHz(midi - 12), t, dur).connect(g);
+  f.connect(g).connect(duck);
+}
+
+// Short filtered chord stab on the off-beat.
+function stab(t, tones) {
+  const f = filter('lowpass', 1800 + intensity * 1600, 2);
+  f.frequency.setValueAtTime(3400, t);
+  f.frequency.exponentialRampToValueAtTime(700, t + 0.18);
+  const g = env(t, 0.06, 0.003, 0.22);
+  for (const m of tones) osc('square', midiHz(m), t, 0.22, 5).connect(f);
+  f.connect(g);
+  g.connect(duck);
+  g.connect(verb);
+}
+
+function pluck(t, midi) {
+  const g = env(t, 0.06, 0.002, 0.12);
+  osc('triangle', midiHz(midi), t, 0.12).connect(g);
+  osc('square', midiHz(midi + 12), t, 0.05).connect(env(t, 0.015, 0.001, 0.05)).connect(duck);
+  g.connect(duck);
+  g.connect(echo);
+}
+
+function drive(s, t) {
+  const s16 = 60 / bpm / 4;
+  const bar = Math.floor(s / 16) % 4;
+  const i = s % 16;
+  const c = DRIVE_CHORDS[bar];
+  const lvl = intensity;
+  if (i === 0) {
+    chord = c;
+    if (lvl < 0.35) pad(t, c.tones.map((m) => m - 12), 16 * s16);
+  }
+  if (lvl < 0.15) {
+    if (i === 0) reese(t, c.root + 12, 14 * s16);
+  } else {
+    for (const [at, up] of REESE) if (at === i) reese(t, c.root + 12 + up, s16 * 2.6);
+  }
+  // Breakbeat: kick on 1 and the "and" of 3, snare on 2 and 4, ghost notes.
+  if (lvl >= 0.25 && (i === 0 || i === 10)) kick(t);
+  if (lvl >= 0.55 && i === 6) kick(t);
+  if (lvl >= 0.35 && (i === 4 || i === 12)) snare(t);
+  if (lvl >= 0.6 && (i === 7 || i === 15) && Math.random() < 0.7) hatGhost(t);
+  if (lvl >= 0.5) hat(t, i % 2 ? 0.08 : 0.045, i === 14);
+  else if (lvl >= 0.2 && i % 2 === 0) hat(t, 0.06, false);
+  if (lvl >= 0.3 && (i === 2 || i === 10 || (lvl > 0.7 && i === 13))) stab(t, c.tones);
+  if (lvl >= 0.6 && i % 2 === 1) pluck(t, c.tones[(i >> 1) % 3] + 12);
+  if (lvl >= 0.8) for (const [b, at, m, len] of DRIVE_HOOK) if (b === bar && at === i) lead(t, m, len * s16);
+}
+
+// A quiet snare ghost note.
+function hatGhost(t) {
+  const g = env(t, 0.08, 0.002, 0.08);
+  noiseSrc(t, 0.1).connect(filter('bandpass', 2400, 1)).connect(g);
+  g.connect(drums);
+}
+
+function synthwave(s, t) {
   const s16 = 60 / bpm / 4;
   const bar = Math.floor(s / 16) % 4;
   const i = s % 16;
@@ -221,15 +311,19 @@ function pump() {
   while (nextTime < ac.currentTime + LOOKAHEAD) {
     bpm += (targetBpm - bpm) * 0.05;
     echoDelay.delayTime.setValueAtTime((60 / bpm / 4) * 3, nextTime);
-    schedule(step, nextTime);
+    (song === 'drive' ? drive : synthwave)(step, nextTime);
     nextTime += 60 / bpm / 4;
     step++;
   }
 }
 
 export const music = {
-  play() {
+  play(name = 'synthwave') {
     if (!ac) build();
+    if (name !== song) {
+      song = name;
+      step = 0;
+    }
     clearTimeout(stopTimer);
     const t = ac.currentTime;
     out.gain.cancelScheduledValues(t);
@@ -253,7 +347,7 @@ export const music = {
 
   set({ intensity: i, bpm: b } = {}) {
     if (i !== undefined) intensity = Math.max(0, Math.min(1, i));
-    if (b !== undefined) targetBpm = b;
+    if (b !== undefined) targetBpm = b * TEMPO[song];
   },
 
   // Chord tones (MIDI) of the bar now playing, so effects can harmonise.

@@ -203,7 +203,7 @@ export function runArcade(cfg) {
   function startRound() {
     game?.dispose();
     setMuted(false);
-    music.play();
+    music.play(cfg.song);
     sfx.start();
     flash();
     game = new cfg.Game(view, hud);
