@@ -257,6 +257,53 @@ def satellite():
     return k
 
 
+# ------------------------------------------------------------------ RADIO
+def radio():
+    k = root('RADIO')
+    box(k, (1.8, 3.6, 0.12), (0, 0, 0.36), 'Carbon', 0.03)
+    hull(k, 3.6, 1.5, 1.2, (0.38, 0.95), (0.38, 0.8), (0, 0, 0), 'Paint', 0.18)
+    # Rounded fenders over each wheel, like an old roadster.
+    for s in (-1, 1):
+        for y in (-1.15, 1.2):
+            ball(k, 0.62, (s * 1.0, y, 0.72), 'Paint', scale=(0.75, 1.25, 0.6))
+        rod(k, (s * 0.86, -0.6, 0.45), (s * 0.86, 0.8, 0.45), 0.07, 'Metal')
+        box(k, (0.05, 2.4, 0.05), (s * 0.76, 0.1, 0.9), 'Glow', 0)
+        cyl(k, 0.16, 0.08, (s * 0.6, -1.8, 0.84), 'Lamp', rot=(math.pi / 2, 0, 0))
+    # Chrome grille.
+    box(k, (1.0, 0.08, 0.42), (0, -1.82, 0.66), 'Metal', 0.03)
+    for x in (-0.36, -0.12, 0.12, 0.36):
+        box(k, (0.05, 0.1, 0.36), (x, -1.86, 0.66), 'Carbon', 0)
+    box(k, (1.2, 0.05, 0.38), (0, -0.3, 1.12), 'Visor', 0.02, rot=(-0.4, 0, 0))
+    driver(k, (0, 0.35, 1.2))
+    # Speaker dial on the tail and a tall whip antenna.
+    cyl(k, 0.36, 0.1, (0, 1.82, 0.82), 'Metal', rot=(math.pi / 2, 0, 0))
+    cyl(k, 0.24, 0.13, (0, 1.84, 0.82), 'Glow', rot=(math.pi / 2, 0, 0))
+    rod(k, (0.55, 1.4, 0.95), (0.7, 1.75, 3.1), 0.03, 'Metal')
+    ball(k, 0.09, (0.7, 1.75, 3.1), 'Glow')
+    wheels(k, -1.15, 1.2, 0.3, 0.2, 1.4, 1.0)
+    return k
+
+
+# ------------------------------------------------------------------ LASER
+def laser():
+    k = root('LASER')
+    box(k, (1.9, 3.7, 0.1), (0, 0, 0.3), 'Carbon', 0.02)
+    hull(k, 3.8, 1.6, 0.3, (0.32, 0.8), (0.32, 0.42), (0, -0.1, 0), 'Paint', 0.06)
+    ball(k, 0.55, (0, 0.25, 0.86), 'Visor', scale=(0.8, 1.6, 0.55))
+    for s in (-1, 1):
+        hull(k, 1.6, 0.12, 0.08, (0.6, 1.55), (0.6, 0.75), (s * 0.95, 1.05, 0), 'Paint', 0.03)
+        box(k, (0.04, 3.2, 0.04), (s * 0.82, -0.1, 0.62), 'Glow', 0)
+        for y in (-1.2, 1.15):
+            hull(k, 1.25, 0.5, 0.42, (0.3, 0.78), (0.3, 0.6), (s * 1.08, y, 0), 'Carbon', 0.1)
+        cyl(k, 0.18, 0.3, (s * 0.45, 1.95, 0.6), 'Metal', rot=(math.pi / 2, 0, 0))
+        cyl(k, 0.12, 0.32, (s * 0.45, 1.96, 0.6), 'Glow', rot=(math.pi / 2, 0, 0))
+    # The emitter: a glowing lens on the nose with a beam line along the spine.
+    ball(k, 0.15, (0, -2.02, 0.44), 'Glow')
+    box(k, (0.05, 1.6, 0.03), (0, -1.15, 0.58), 'Glow', 0, rot=(math.atan2(0.3, 1.9), 0, 0))
+    wheels(k, -1.2, 1.15, 0.26, 0.15, 1.3, 1.06)
+    return k
+
+
 def export(k, path):
     bpy.ops.object.select_all(action='DESELECT')
     k.select_set(True)
@@ -267,13 +314,13 @@ def export(k, path):
 
 
 os.makedirs(OUT, exist_ok=True)
-karts = [('fiber', fiber()), ('5g', five_g()), ('satellite', satellite())]
+karts = [('fiber', fiber()), ('5g', five_g()), ('satellite', satellite()), ('radio', radio()), ('laser', laser())]
 for name, k in karts:
     export(k, os.path.join(OUT, f'kart-{name}.glb'))
 
 if PREVIEW:
     os.makedirs(PREVIEW, exist_ok=True)
-    colors = [(0.0, 0.85, 1.0), (1.0, 0.45, 0.05), (0.55, 1.0, 0.1)]
+    colors = [(0.0, 0.85, 1.0), (1.0, 0.45, 0.05), (0.55, 1.0, 0.1), (1.0, 0.15, 0.6), (1.0, 0.85, 0.1)]
     # One paint colour per kart for the preview only.
     for (name, k), col in zip(karts, colors):
         paint = M['Paint'].copy()
@@ -283,7 +330,7 @@ if PREVIEW:
                 for slot in c.material_slots:
                     if slot.material == M['Paint']:
                         slot.material = paint
-    for (name, k), x in zip(karts, (-3.2, 0, 3.2)):
+    for (name, k), x in zip(karts, (-6.6, -3.3, 0, 3.3, 6.6)):
         k.location.x = x
     scene = bpy.context.scene
     try:
@@ -310,7 +357,7 @@ if PREVIEW:
         direction = light.location.copy()
         light.rotation_euler = (-direction).to_track_quat('-Z', 'Y').to_euler()
     # Front three-quarter, then the chase-camera view from behind.
-    for view, loc, rot in (('front', (8, -12, 5.5), (70, 0, 33)), ('back', (-7, 12.5, 5.5), (70, 0, 209))):
+    for view, loc, rot in (('front', (11, -17, 7), (70, 0, 33)), ('back', (-10, 17.5, 7), (70, 0, 209))):
         cam.location = loc
         cam.rotation_euler = tuple(math.radians(a) for a in rot)
         scene.render.filepath = os.path.join(PREVIEW, f'karts-{view}.png')

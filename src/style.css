@@ -1292,3 +1292,16 @@ body {
   background: #ff9a1f;
   box-shadow: 0 0 12px #ff9a1f;
 }
+.static.on.light { opacity: 0.3; }
+
+.jk-item .slot2 {
+  display: grid;
+  place-items: center;
+  width: 1.7em;
+  height: 1.7em;
+  font-size: 1.2em;
+  font-weight: 900;
+  border: 2px dashed rgba(255, 255, 255, 0.22);
+  border-radius: 9px;
+  background: rgba(0, 0, 0, 0.45);
+}

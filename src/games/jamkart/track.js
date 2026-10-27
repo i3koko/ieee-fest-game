@@ -13,6 +13,33 @@ const CONTROL = [
 
 export const FOG = { color: 0x020a07, near: 70, far: 240 };
 
+// Track features, each switchable. u is the share of a lap (0 = start line),
+// lat the sideways span (+ is left).
+export const HAZARDS = {
+  flux: [{ u0: 0.3, u1: 0.335, lat: [0.5, 8] }, { u0: 0.345, u1: 0.375, lat: [-8, -0.5] }],
+  boost: [{ u0: 0.085, u1: 0.1, lat: [1, 6.5] }, { u0: 0.535, u1: 0.55, lat: [-6.5, -1] }, { u0: 0.775, u1: 0.79, lat: [-2.8, 2.8] }],
+  emi: [{ u0: 0.63, u1: 0.68, lat: [-8, 8] }],
+  fan: [{ u0: 0.85, u1: 0.9, lat: [-8, 8] }],
+  gates: [{ u0: 0.945 }],
+};
+
+const smooth = (x) => (x <= 0 ? 0 : x >= 1 ? 1 : x * x * (3 - 2 * x));
+const bump = (u, c, w) => {
+  const d = Math.min(Math.abs(u - c), 1 - Math.abs(u - c)) / w;
+  return d < 1 ? 0.5 + 0.5 * Math.cos(Math.PI * d) : 0;
+};
+
+// Two rolling hills plus a kicker ramp: it steepens all the way to a sharp
+// lip, so fast karts launch off it, then the road drops away underneath.
+function heightAt(u) {
+  let h = 7 * bump(u, 0.22, 0.075) + 5 * bump(u, 0.72, 0.065);
+  if (u > 0.43 && u < 0.47) h += 4.5 * ((u - 0.43) / 0.04) ** 2;
+  else if (u >= 0.47 && u < 0.5) h += 4.5 * (1 - smooth((u - 0.47) / 0.03));
+  return h;
+}
+
+const wrap = (i) => ((i % SAMPLES) + SAMPLES) % SAMPLES;
+
 export function buildTrack() {
   const curve = new THREE.CatmullRomCurve3(
     CONTROL.map(([x, z]) => new THREE.Vector3(x, 0, z)),
@@ -31,10 +58,37 @@ export function buildTrack() {
   const dist = [0];
   for (let i = 1; i < SAMPLES; i++) dist.push(dist[i - 1] + pts[i].distanceTo(pts[i - 1]));
   const length = dist[SAMPLES - 1] + pts[0].distanceTo(pts[SAMPLES - 1]);
-  return { pts, tan, side, dist, length };
+
+  // Bank the corners: the outside edge rises with how tight the turn is.
+  const ang = tan.map((t) => Math.atan2(t.x, t.y));
+  const curv = ang.map((_, i) => {
+    const a = ang[wrap(i + 6)] - ang[wrap(i - 6)];
+    return Math.atan2(Math.sin(a), Math.cos(a)) / (dist[1] * 12);
+  });
+  const bank = curv.map((_, i) => {
+    let sum = 0;
+    for (let j = -15; j <= 15; j++) sum += curv[wrap(i + j)];
+    return Math.max(-0.2, Math.min(0.2, (sum / 31) * 6));
+  });
+  // Lift banked corners so the low inside edge stays above the board.
+  const height = dist.map((d, i) => heightAt(d / length) + Math.abs(bank[i]) * (TRACK_W / 2 + 0.6));
+  return { pts, tan, side, dist, length, height, bank };
 }
 
-const wrap = (i) => ((i % SAMPLES) + SAMPLES) % SAMPLES;
+// Road surface height at sample i, `lat` from the centre line.
+export const surfaceY = (track, i, lat) => track.height[i] - lat * track.bank[i];
+
+// Smooth road height under (x, z), blending between neighbouring samples.
+export function groundAt(track, i, x, z, lat) {
+  const p = track.pts[i];
+  const t = track.tan[i];
+  const s = (x - p.x) * t.x + (z - p.y) * t.y;
+  const j = wrap(i + (s >= 0 ? 1 : -1));
+  const f = Math.min(Math.abs(s) / (track.dist[1] || 1), 1);
+  return surfaceY(track, i, lat) * (1 - f) + surfaceY(track, j, lat) * f;
+}
+
+export const sampleAt = (u) => Math.floor(u * SAMPLES) % SAMPLES;
 
 // Nearest sample to (x, z), searching around `hint` (or everywhere if null).
 // Returns the sample index and the signed sideways offset (+ is left).
@@ -132,20 +186,24 @@ const boardFrag = /* glsl */ `
     gl_FragColor = vec4(mix(col, uFogColor, smoothstep(uFogNear, uFogFar, d)), 1.0);
   }`;
 
-// A strip following the track at a sideways offset (a road or a wall).
-function strip(track, latA, latB, yA, yB, vScale) {
+// A strip following the track at a sideways offset (a road, wall or decal).
+// Each edge sits `offA`/`offB` above the road, or on the board if `ground`.
+function strip(track, latA, latB, offA, offB, vScale, { i0 = 0, i1 = SAMPLES, groundA = false, groundB = false } = {}) {
   const pos = [];
   const uv = [];
   const idx = [];
-  for (let i = 0; i <= SAMPLES; i++) {
-    const k = i % SAMPLES;
+  const n = i1 - i0;
+  for (let j = 0; j <= n; j++) {
+    const k = wrap(i0 + j);
     const p = track.pts[k];
     const s = track.side[k];
-    const v = i === SAMPLES ? track.length : track.dist[k];
+    const v = i0 + j === SAMPLES ? track.length : track.dist[k];
+    const yA = groundA ? 0 : surfaceY(track, k, latA) + offA;
+    const yB = groundB ? 0 : surfaceY(track, k, latB) + offB;
     pos.push(p.x + s.x * latA, yA, p.y + s.y * latA, p.x + s.x * latB, yB, p.y + s.y * latB);
     uv.push(0, v * vScale, 1, v * vScale);
-    if (i < SAMPLES) {
-      const a = i * 2;
+    if (j < n) {
+      const a = j * 2;
       idx.push(a, a + 2, a + 1, a + 1, a + 2, a + 3);
     }
   }
@@ -177,6 +235,47 @@ function rng(seed) {
 }
 
 // Builds every static mesh. Returns materials that animate.
+// Decals laid on the road for the hazards. kind: 0 flux, 1 boost, 2 EMI, 3 wind.
+const decalFrag = /* glsl */ `
+  uniform float uTime;
+  uniform int uKind;
+  varying vec2 vUv;
+  varying vec3 vWorld;
+  float hash(vec2 p) { return fract(sin(dot(p, vec2(41.3, 289.1))) * 43758.5453); }
+  void main() {
+    float u = vUv.x;
+    float v = vUv.y;
+    float edge = smoothstep(0.0, 0.08, u) * smoothstep(1.0, 0.92, u);
+    vec3 col;
+    float a;
+    if (uKind == 0) {
+      // Oily flux: shifting teal/violet sheen with bright glints.
+      float s = sin(v * 0.45 + uTime * 1.3 + sin(u * 9.0 + v * 0.2) * 2.0);
+      col = mix(vec3(0.1, 0.9, 0.8), vec3(0.6, 0.25, 1.0), 0.5 + 0.5 * s) * 0.55;
+      col += vec3(1.0) * pow(max(0.0, sin(v * 1.7 - uTime * 2.0 + u * 13.0)), 30.0) * 0.8;
+      a = 0.6 * edge;
+    } else if (uKind == 1) {
+      // Fibre link: bright chevrons racing forward.
+      float c = fract((v + abs(u - 0.5) * 6.0) / 3.0 - uTime * 2.5);
+      float chev = smoothstep(0.0, 0.08, c) * smoothstep(0.45, 0.3, c);
+      col = vec3(0.45, 1.0, 0.25) * (0.25 + chev * 1.3);
+      a = 0.9 * edge;
+    } else if (uKind == 2) {
+      // EMI: crackling magenta noise.
+      vec2 cell = floor(vec2(u * 30.0, v * 1.5 + floor(uTime * 12.0) * 7.0));
+      float n = step(0.93, hash(cell));
+      float wave = 0.5 + 0.5 * sin(v * 0.8 - uTime * 6.0);
+      col = vec3(1.0, 0.2, 0.75) * (n * 1.2 + wave * 0.12);
+      a = (0.35 + n * 0.5) * edge;
+    } else {
+      // Wind from the fan: faint stripes sliding across the road.
+      float st = smoothstep(0.85, 1.0, fract(u * 3.0 - uTime * 1.8 + sin(v * 0.15) * 0.3));
+      col = vec3(0.7, 0.9, 1.0) * st * 0.35;
+      a = st * 0.5;
+    }
+    gl_FragColor = vec4(col, a);
+  }`;
+
 export function buildBoard(scene, track) {
   const trackMat = new THREE.ShaderMaterial({
     vertexShader: worldVert,
@@ -196,7 +295,8 @@ export function buildBoard(scene, track) {
   board.position.set(0, 0, -80);
   scene.add(board);
 
-  // Glowing rails along both edges.
+  // Glowing rails along both edges, and dark skirts down to the board where
+  // the road is raised.
   const railMat = new THREE.MeshBasicMaterial({
     color: new THREE.Color(0xffa030).multiplyScalar(0.7),
     transparent: true,
@@ -205,17 +305,209 @@ export function buildBoard(scene, track) {
     blending: THREE.AdditiveBlending,
     depthWrite: false,
   });
+  const skirtMat = new THREE.MeshStandardMaterial({ color: 0x1a0f08, roughness: 0.6, metalness: 0.4, side: THREE.DoubleSide });
   for (const s of [1, -1]) {
     const lat = s * (TRACK_W / 2 + 0.2);
     scene.add(new THREE.Mesh(strip(track, lat, lat, 0, 0.9, 1), railMat));
+    scene.add(new THREE.Mesh(strip(track, lat, lat, 0, 0, 1, { groundB: true }), skirtMat));
   }
+  buildPillars(scene, track);
 
-  const lights = buildScenery(scene, track);
+  const reserved = [];
+  const hazards = buildHazards(scene, track, reserved);
+  const lights = buildScenery(scene, track, reserved);
   buildGantry(scene, track);
-  return { trackMat, lights };
+
+  return {
+    trackMat,
+    lights,
+    hazards,
+    update(time) {
+      trackMat.uniforms.uTime.value = time;
+      for (const m of hazards.decals) m.uniforms.uTime.value = time;
+      hazards.animate(time);
+    },
+  };
 }
 
-function buildScenery(scene, track) {
+// Support columns under the raised sections.
+function buildPillars(scene, track) {
+  const spots = [];
+  for (let i = 0; i < SAMPLES; i += 12) {
+    if (track.height[i] < 1.2) continue;
+    for (const s of [1, -1]) spots.push([i, s * (TRACK_W / 2 - 0.8)]);
+  }
+  const mesh = new THREE.InstancedMesh(
+    new THREE.CylinderGeometry(0.45, 0.6, 1, 10).translate(0, 0.5, 0),
+    new THREE.MeshStandardMaterial({ color: 0x3a3f48, roughness: 0.4, metalness: 0.7 }),
+    spots.length
+  );
+  const m = new THREE.Matrix4();
+  spots.forEach(([i, lat], n) => {
+    const p = track.pts[i];
+    const sd = track.side[i];
+    const h = surfaceY(track, i, lat);
+    m.makeScale(1, h, 1).setPosition(p.x + sd.x * lat, 0, p.y + sd.y * lat);
+    mesh.setMatrixAt(n, m);
+  });
+  scene.add(mesh);
+}
+
+// Gate pistons are up for 40% of every 2 s cycle, staggered so at least one
+// lane is always open.
+export const GATE_CYCLE = 2;
+const GATE_UP = 0.4;
+export function gateHeight(gate, time) {
+  const ph = (time / GATE_CYCLE + gate.phase) % 1;
+  return ph < GATE_UP ? Math.max(0, Math.min(1, Math.min(ph, GATE_UP - ph) * 14)) : 0;
+}
+
+function buildHazards(scene, track, reserved) {
+  const zones = [];
+  const decals = [];
+  const movers = [];
+  const decal = (kind, z) => {
+    const mat = new THREE.ShaderMaterial({
+      vertexShader: worldVert,
+      fragmentShader: decalFrag,
+      uniforms: { uTime: { value: 0 }, uKind: { value: kind } },
+      transparent: true,
+      depthWrite: false,
+      side: THREE.DoubleSide,
+      blending: kind === 0 ? THREE.NormalBlending : THREE.AdditiveBlending,
+    });
+    const i0 = sampleAt(z.u0);
+    const i1 = sampleAt(z.u1);
+    scene.add(new THREE.Mesh(strip(track, z.lat[1], z.lat[0], 0.06, 0.06, 1, { i0, i1 }), mat));
+    decals.push(mat);
+    return { i0, i1, lat: z.lat };
+  };
+  const beside = (i, lat) => {
+    const p = track.pts[i];
+    const s = track.side[i];
+    return [p.x + s.x * lat, p.y + s.y * lat];
+  };
+  const metal = new THREE.MeshStandardMaterial({ color: 0x2a2f38, roughness: 0.35, metalness: 0.8 });
+
+  for (const z of HAZARDS.flux ?? []) zones.push({ type: 'flux', ...decal(0, z) });
+  for (const z of HAZARDS.boost ?? []) zones.push({ type: 'boost', ...decal(1, z) });
+
+  for (const z of HAZARDS.emi ?? []) {
+    zones.push({ type: 'emi', ...decal(2, z) });
+    // A big copper inductor coil beside the road, crackling with arcs.
+    const mid = sampleAt((z.u0 + z.u1) / 2);
+    const out = track.bank[mid] > 0 ? -1 : 1; // outside of the bend
+    const [x, zz] = beside(mid, out * (TRACK_W / 2 + 10));
+    const base = surfaceY(track, mid, 0);
+    const coil = new THREE.Group();
+    const copper = new THREE.MeshStandardMaterial({ color: 0xc8742e, roughness: 0.3, metalness: 0.9, emissive: 0x401800 });
+    for (let n = 0; n < 9; n++) {
+      const ring = new THREE.Mesh(new THREE.TorusGeometry(4, 0.45, 10, 32), copper);
+      ring.rotation.x = Math.PI / 2;
+      ring.position.y = 1 + n * 1.0;
+      coil.add(ring);
+    }
+    const core = new THREE.Mesh(new THREE.CylinderGeometry(2.6, 2.6, 11, 20), metal);
+    core.position.y = 5.5;
+    coil.add(core);
+    const arcMat = new THREE.LineBasicMaterial({ color: 0xff5ad8, transparent: true, opacity: 0.9 });
+    const arcs = new THREE.LineSegments(new THREE.BufferGeometry(), arcMat);
+    arcs.frustumCulled = false;
+    coil.add(arcs);
+    coil.position.set(x, Math.max(0, base - 1), zz);
+    scene.add(coil);
+    reserved.push([x, zz, 7]);
+    movers.push((t) => {
+      // Fresh random lightning from the coil towards the road a few times a second.
+      if (Math.floor(t * 9) === coil.userData.f) return;
+      coil.userData.f = Math.floor(t * 9);
+      const pts = [];
+      for (let a = 0; a < 4; a++) {
+        let px = 0;
+        let py = 4 + Math.random() * 6;
+        let pz = 0;
+        const dir = Math.random() * Math.PI * 2;
+        for (let k = 0; k < 6; k++) {
+          const nx = px + Math.cos(dir) * 2.2 + (Math.random() - 0.5) * 1.5;
+          const ny = py + (Math.random() - 0.6) * 1.6;
+          const nz = pz + Math.sin(dir) * 2.2 + (Math.random() - 0.5) * 1.5;
+          pts.push(px, py, pz, nx, ny, nz);
+          px = nx;
+          py = ny;
+          pz = nz;
+        }
+      }
+      arcs.geometry.setAttribute('position', new THREE.Float32BufferAttribute(pts, 3));
+    });
+  }
+
+  for (const z of HAZARDS.fan ?? []) {
+    const info = decal(3, z);
+    const mid = sampleAt((z.u0 + z.u1) / 2);
+    const out = track.bank[mid] > 0 ? 1 : -1;
+    // The fan stands on one side and blows karts towards the other.
+    zones.push({ type: 'fan', ...info, push: -out });
+    const [x, zz] = beside(mid, out * (TRACK_W / 2 + 7));
+    const fan = new THREE.Group();
+    const frame = new THREE.Mesh(new THREE.BoxGeometry(12, 12, 1.6), metal);
+    fan.add(frame);
+    const hole = new THREE.Mesh(new THREE.CylinderGeometry(5.6, 5.6, 1.8, 40), new THREE.MeshBasicMaterial({ color: 0x050607 }));
+    hole.rotation.x = Math.PI / 2;
+    fan.add(hole);
+    const blades = new THREE.Group();
+    const bladeMat = new THREE.MeshStandardMaterial({ color: 0x9aa3b0, roughness: 0.4, metalness: 0.6 });
+    for (let n = 0; n < 7; n++) {
+      const b = new THREE.Mesh(new THREE.BoxGeometry(1.6, 5.2, 0.15), bladeMat);
+      b.position.y = 2.8;
+      b.rotation.y = 0.5;
+      const arm = new THREE.Group();
+      arm.rotation.z = (n / 7) * Math.PI * 2;
+      arm.add(b);
+      blades.add(arm);
+    }
+    const hub = new THREE.Mesh(new THREE.CylinderGeometry(1.3, 1.3, 1.2, 20), new THREE.MeshStandardMaterial({ color: 0x3df5ff, emissive: 0x0a5560 }));
+    hub.rotation.x = Math.PI / 2;
+    blades.add(hub);
+    blades.position.z = 1;
+    fan.add(blades);
+    fan.position.set(x, surfaceY(track, mid, 0) + 6.2, zz);
+    const t = track.tan[mid];
+    // Face across the road, angled towards oncoming karts so they see it.
+    fan.rotation.y = Math.atan2(t.x, t.y) + (out > 0 ? -Math.PI / 2 - 0.7 : Math.PI / 2 + 0.7);
+    scene.add(fan);
+    reserved.push([x, zz, 8]);
+    movers.push((time) => (blades.rotation.z = -time * 9));
+  }
+
+  const gates = [];
+  for (const z of HAZARDS.gates ?? []) {
+    const i = sampleAt(z.u0);
+    const t = track.tan[i];
+    const stripe = new THREE.MeshBasicMaterial({ color: 0xff3b4a });
+    [-5.2, 0, 5.2].forEach((lat, n) => {
+      const g = new THREE.Group();
+      const block = new THREE.Mesh(new THREE.BoxGeometry(4.6, 2.4, 1.4), metal);
+      block.position.y = 1.2;
+      const top = new THREE.Mesh(new THREE.BoxGeometry(4.7, 0.25, 1.5), stripe);
+      top.position.y = 2.45;
+      g.add(block, top);
+      const [x, zz] = beside(i, lat);
+      g.position.set(x, surfaceY(track, i, lat), zz);
+      g.rotation.y = Math.atan2(t.x, t.y);
+      scene.add(g);
+      gates.push({ i, lat, x, z: zz, phase: n / 3, mesh: g, base: g.position.y });
+    });
+    // Slots in the road the pistons rise out of.
+    zones.push({ type: 'gates', i0: i - 4, i1: i + 4, lat: [-8, 8] });
+  }
+  movers.push((time) => {
+    for (const g of gates) g.mesh.position.y = g.base - 2.6 * (1 - gateHeight(g, time));
+  });
+
+  return { zones, decals, gates, animate: (t) => movers.forEach((f) => f(t)) };
+}
+
+function buildScenery(scene, track, reserved = []) {
   const rand = rng(7);
   const chipMat = new THREE.MeshStandardMaterial({ color: 0x15171c, roughness: 0.45, metalness: 0.3 });
   const pinMat = new THREE.MeshStandardMaterial({ color: 0xc8ccd4, roughness: 0.3, metalness: 0.9 });
@@ -226,7 +518,7 @@ function buildScenery(scene, track) {
   const clear = (x, z, r) => Math.abs(locate(track, x, z).lat) > TRACK_W / 2 + r;
 
   const pins = [];
-  const placed = [];
+  const placed = [...reserved];
   const free = (x, z, r) => placed.every(([px, pz, pr]) => Math.hypot(px - x, pz - z) > pr + r);
 
   // The big chip in the infield carries the branch name.

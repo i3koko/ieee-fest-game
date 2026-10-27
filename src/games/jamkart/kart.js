@@ -25,6 +25,20 @@ export const MODELS = [
     stats: { SPEED: 4, HANDLING: 3, ACCEL: 2, WEIGHT: 5 },
     top: 45, turn: 2.2, accel: 21, mass: 1.8, grip: 15, boost: 1, recover: 1, jamRange: 1.6,
   },
+  {
+    id: 'radio', name: 'RADIO', file: 'kart-radio.glb',
+    blurb: 'A classic all-rounder with a whip antenna: good at everything.',
+    perk: 'Carries two power-ups at once',
+    stats: { SPEED: 3, HANDLING: 3, ACCEL: 3, WEIGHT: 3 },
+    top: 44.5, turn: 2.35, accel: 27, mass: 1.2, grip: 15, boost: 1, recover: 1, jamRange: 1, slots: 2,
+  },
+  {
+    id: 'laser', name: 'LASER', file: 'kart-laser.glb',
+    blurb: 'A beam of light on wheels: quick and light, but slippery.',
+    perk: 'Drift boosts charge 50% faster',
+    stats: { SPEED: 4, HANDLING: 4, ACCEL: 4, WEIGHT: 1 },
+    top: 45.5, turn: 2.45, accel: 29, mass: 0.75, grip: 11, boost: 1, recover: 1, jamRange: 1, driftRate: 1.5,
+  },
 ];
 
 export const PALETTE = [0x3df5ff, 0xff9a1f, 0xff3fd2, 0x9dff3a, 0xffe03d, 0xff3b4a, 0xf4f6ff, 0x8a7dff];

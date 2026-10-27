@@ -1,10 +1,11 @@
 import * as THREE from 'three';
 import { beep, noise, createTone, sfx } from '../../core/audio.js';
 import { music } from '../../core/music.js';
-import { TRACK_W, SAMPLES, FOG, buildTrack, buildBoard, locate, ahead } from './track.js';
+import { TRACK_W, SAMPLES, FOG, buildTrack, buildBoard, locate, ahead, groundAt, surfaceY, gateHeight } from './track.js';
 import { makeKart, MODELS, PALETTE } from './kart.js';
 
 const RACERS = 8;
+const GRAVITY = 30;
 const LAPS = 3;
 const BOOST_BONUS = 20; // compression adds this to a kart's top speed
 const BRAKE = 48;
@@ -17,7 +18,8 @@ const JAM_RANGE = 45; // jammers only reach nearby receivers (all of them)
 const SPIN_TIME = 1.1;
 const SHIELD_TIME = 8;
 const BOOST_TIME = 2.2;
-const DRIFT_GRIP = 3; // sideways grip while drifting (normal is per model)
+const DRIFT_GRIP = 5.5; // sideways grip while drifting (normal is per model)
+const MAX_SLIP = 0.45; // radians a drifting kart may point away from where it's going
 const FIREWALL_LIFE = 14;
 const FINISH_GRACE = 25; // seconds the field gets after the winner crosses
 const RACE_CAP = 160;
@@ -44,6 +46,15 @@ const ITEMS = {
     name: 'ECC SHIELD', icon: '◈', color: '#7fd4ff',
     line: 'Blocks the next hit. Error-correcting codes add spare bits so damaged data can be repaired.',
   },
+};
+
+// Track features explain themselves the first time a player meets one.
+const HAZARD_INFO = {
+  flux: { name: 'FLUX SPILL', color: '#5ff2e0', line: 'Solder flux helps solder flow onto a board. It also makes tyres lose their grip.' },
+  boost: { name: 'FIBER LINK', color: '#9dff3a', line: 'Light in glass fibre is the fastest way to move data. Ride the strip for a boost.' },
+  emi: { name: 'EMI ZONE', color: '#ff5ad8', line: 'Electromagnetic interference: big coils radiate noise that scrambles nearby signals (and your steering).' },
+  fan: { name: 'COOLING FAN', color: '#9fd8ff', line: 'Chips run hot, so fans blow the heat away. This one blows karts away too.' },
+  gates: { name: 'CLOCK GATES', color: '#ff3b4a', line: 'Digital circuits move in step with a clock. Time your run for the open lane.' },
 };
 
 // Keyboard layouts. In one-player mode every key drives player 1.
@@ -169,7 +180,7 @@ export class JamKart {
       const p = pts[idx];
       Object.assign(k, {
         x: p.x + side[idx].x * lat, z: p.y + side[idx].y * lat,
-        h: Math.atan2(tan[idx].x, tan[idx].y), vx: 0, vz: 0, v: 0, vl: 0,
+        h: Math.atan2(tan[idx].x, tan[idx].y), vx: 0, vz: 0, v: 0, vl: 0, y: surfaceY(this.track, idx, lat), vy: 0, air: false, airT: 0,
         idx, lastIdx: idx, lat, lap: idx > SAMPLES / 2 ? -1 : 0, place: slot,
       });
       this.#rebuild(k);
@@ -187,7 +198,8 @@ export class JamKart {
       idx: 0, lastIdx: 0, lat: 0, lap: 0, prog: 0, place: i,
       finished: false, finishTime: 0, finalPlace: null, lapStart: 0, bestLap: Infinity,
       item: null, boostT: 0, jamT: 0, shieldT: 0, spinT: 0, spinA: 0, scrapeT: 0, wrongT: 0,
-      drift: 0, driftCharge: 0, wasDrifting: false,
+      drift: 0, driftCharge: 0, wasDrifting: false, driftDir: 0, prevBrake: true, item2: null, emiT: 0, gateT: 0, seen: new Set(), groundPitch: 0, groundRoll: 0,
+      y: 0, vy: 0, air: false, airT: 0,
       hits: 0, used: 0, prevFire: true, cpuDelay: 0, cpuLane: (Math.random() - 0.5) * 6, squash: 1,
       skill: 0.88 + Math.random() * 0.1, // CPU pace, as a share of the kart's top speed
       cam: new THREE.PerspectiveCamera(70, 1, 0.3, 600), camPos: new THREE.Vector3(), camLook: new THREE.Vector3(),
@@ -204,6 +216,7 @@ export class JamKart {
     k.spec = MODELS[k.model];
     k.color = PALETTE[k.colorIdx];
     k.parts = makeKart(k.spec.id, k.color);
+    k.parts.group.rotation.order = 'YXZ'; // yaw, then the road's slope and bank
     this.scene.add(k.parts.group);
     this.#animateKart(k, 0);
   }
@@ -224,9 +237,10 @@ export class JamKart {
         mesh.add(new THREE.LineSegments(edges, edgeMat));
         const x = p.x + s.x * lat;
         const z = p.y + s.y * lat;
-        mesh.position.set(x, 1.4, z);
+        const y = surfaceY(this.track, i, lat) + 1.4;
+        mesh.position.set(x, y, z);
         this.scene.add(mesh);
-        this.boxes.push({ mesh, x, z, t: 0 });
+        this.boxes.push({ mesh, x, z, y, t: 0 });
       }
     }
   }
@@ -243,7 +257,7 @@ export class JamKart {
     );
     this.sparkPts.frustumCulled = false;
     this.scene.add(this.sparkPts);
-    this.sparks = Array.from({ length: n }, () => ({ life: 0, x: 0, y: -10, z: 0, vx: 0, vy: 0, vz: 0, c: new THREE.Color() }));
+    this.sparks = Array.from({ length: n }, () => ({ life: 0, x: 0, y: -10, z: 0, vx: 0, vy: 0, vz: 0, floor: 0, c: new THREE.Color() }));
     this.sparkNext = 0;
   }
 
@@ -251,6 +265,7 @@ export class JamKart {
     for (let n = 0; n < count; n++) {
       const s = this.sparks[this.sparkNext++ % this.sparks.length];
       s.life = 0.4 + Math.random() * 0.4;
+      s.floor = y - 0.4;
       s.x = x;
       s.y = y;
       s.z = z;
@@ -269,7 +284,7 @@ export class JamKart {
         s.life -= dt;
         s.vy -= 18 * dt;
         s.x += s.vx * dt;
-        s.y = Math.max(0.05, s.y + s.vy * dt);
+        s.y = Math.max(s.floor, s.y + s.vy * dt);
         s.z += s.vz * dt;
       }
       const fade = Math.max(0, Math.min(1, s.life * 2.5));
@@ -288,7 +303,7 @@ export class JamKart {
           <div class="jk-place" data-place>1ST</div>
           <div class="jk-lap" data-lap>LAP 1/${LAPS}</div>
         </div>
-        <div class="jk-item" data-item><div class="slot" data-slot></div><div class="key" data-key></div></div>
+        <div class="jk-item" data-item><div class="slot" data-slot></div><div class="slot2" data-slot2></div><div class="key" data-key></div></div>
         <div class="jk-drift" data-drift><i></i></div>
         <div class="jk-card" data-card><b></b><span></span></div>
         <div class="jk-big" data-big></div>
@@ -320,7 +335,7 @@ export class JamKart {
         const h = root.querySelector(`[data-half="${i}"]`);
         const q = (k) => h.querySelector(`[data-${k}]`);
         return {
-          root: h, tag: q('tag'), place: q('place'), lap: q('lap'), item: q('item'), slot: q('slot'), key: q('key'), card: q('card'), big: q('big'), static: q('static'), drift: q('drift'), cardT: 0, bigT: 0,
+          root: h, tag: q('tag'), place: q('place'), lap: q('lap'), item: q('item'), slot: q('slot'), slot2: q('slot2'), key: q('key'), card: q('card'), big: q('big'), static: q('static'), drift: q('drift'), cardT: 0, bigT: 0,
           who: q('who'), mname: q('mname'), blurb: q('blurb'), stats: q('stats'), perk: q('perk'), colors: q('colors'), ready: q('ready'),
         };
       }),
@@ -383,12 +398,15 @@ export class JamKart {
       if (Math.abs(x) > 0.18) steer = x;
       if (p.buttons[14]?.pressed) steer = -1;
       if (p.buttons[15]?.pressed) steer = 1;
-      brake ||= p.buttons[13]?.pressed || (p.buttons[6]?.value ?? 0) > 0.4 || (p.axes[1] ?? 0) > 0.6;
-      fire ||= [0, 1, 2, 3, 5].some((b) => p.buttons[b]?.pressed);
+      brake ||= [1, 4, 6, 13].some((b) => p.buttons[b]?.pressed) || (p.axes[1] ?? 0) > 0.6;
+      fire ||= [0, 2, 3, 5].some((b) => p.buttons[b]?.pressed);
     }
     const pressed = fire && !k.prevFire;
+    // Tapping brake while turning starts a drift; holding it still brakes.
+    const drift = brake && !k.prevBrake;
     k.prevFire = fire;
-    return { steer: clamp(steer, -1, 1), brake, fire: pressed };
+    k.prevBrake = brake;
+    return { steer: clamp(steer, -1, 1), brake, fire: pressed, drift };
   }
 
   // Follows the racing line, grabs boxes, dodges firewalls and other karts,
@@ -403,6 +421,22 @@ export class JamKart {
     for (const w of this.walls) {
       const d = this.#along(k, w.x, w.z);
       if (d > 0 && d < 35) k.cpuLane = w.lat > 0 ? -4.5 : 4.5;
+    }
+    // Track features: dodge flux, aim for boost strips, pick the open gate.
+    for (const zn of this.board.hazards.zones) {
+      const d = (zn.i0 - k.idx + SAMPLES) % SAMPLES;
+      if (d > 45) continue;
+      const mid = (zn.lat[0] + zn.lat[1]) / 2;
+      if (zn.type === 'flux') k.cpuLane = mid > 0 ? -4.5 : 4.5;
+      if (zn.type === 'boost' && !k.item) k.cpuLane = clamp(mid, -EDGE + 1, EDGE - 1);
+    }
+    for (const g of this.board.hazards.gates) {
+      const d = ((g.i - k.idx + SAMPLES) % SAMPLES) * this.track.dist[1];
+      if (d > 70 || d < 4) continue;
+      const arrive = this.time + d / Math.max(k.v, 10);
+      const open = [...this.board.hazards.gates].sort((a, b) => gateHeight(a, arrive) - gateHeight(b, arrive))[0];
+      k.cpuLane = open.lat;
+      break;
     }
     // Pull out to pass a slower kart just ahead.
     for (const o of this.karts) {
@@ -484,10 +518,10 @@ export class JamKart {
     this.karts.forEach((k, i) => {
       if (!k.human) return;
       const a = this.time * 0.45 + i * Math.PI + 0.6;
-      k.cam.position.set(k.x + Math.sin(k.h + a) * 6.8, 2.6, k.z + Math.cos(k.h + a) * 6.8);
-      k.cam.lookAt(k.x, 0.9, k.z);
+      k.cam.position.set(k.x + Math.sin(k.h + a) * 6.8, k.y + 2.6, k.z + Math.cos(k.h + a) * 6.8);
+      k.cam.lookAt(k.x, k.y + 0.9, k.z);
     });
-    this.board.trackMat.uniforms.uTime.value = this.time;
+    this.board.update(this.time);
     this.view.render();
 
     const done = this.karts.every((k) => !k.human || k.ready) || this.selectT > SELECT_TIMEOUT;
@@ -564,6 +598,7 @@ export class JamKart {
       if (live) ctl = k.human && !k.finished ? this.#controls(k) : this.#cpu(k, dt, k.finished ? 0.6 : 1);
       if (k.human && !k.finished) k.maxV = k.spec.top;
       this.#drive(k, ctl, dt, live);
+      if (live) this.#gates(k);
       if (ctl.fire && k.item && live) this.#useItem(k);
     }
     this.#bump();
@@ -576,7 +611,7 @@ export class JamKart {
       this.#animateKart(k, dt);
       if (k.human) this.#placeCamera(k, dt);
     }
-    this.board.trackMat.uniforms.uTime.value = this.time;
+    this.board.update(this.time);
     for (const l of this.board.lights) l.mat.color.copy(l.base).multiplyScalar(0.6 + 0.4 * Math.sin(this.time * 3 + l.phase));
 
     if (this.demo) this.#placeDemoCam(dt);
@@ -602,7 +637,9 @@ export class JamKart {
   // speed to drift (less grip, sharper turn) and charge a mini-turbo.
   #drive(k, ctl, dt, live) {
     const { tan, side } = this.track;
-    for (const t of ['boostT', 'jamT', 'shieldT', 'spinT', 'scrapeT']) k[t] = Math.max(0, k[t] - dt);
+    for (const t of ['boostT', 'jamT', 'shieldT', 'spinT', 'scrapeT', 'emiT', 'gateT']) k[t] = Math.max(0, k[t] - dt);
+    const zone = live && !k.air ? this.#zoneAt(k) : null;
+    if (zone) this.#enterZone(k, zone, dt);
 
     const fx = Math.sin(k.h);
     const fz = Math.cos(k.h);
@@ -612,34 +649,64 @@ export class JamKart {
     const top = k.maxV ?? k.spec.top;
     const maxV = (k.boostT > 0 ? top + BOOST_BONUS : top) * (k.jamT > 0 ? 0.8 : 1);
     const steerIn = k.spinT > 0 ? 0 : ctl.steer;
-    const drifting = live && k.spinT <= 0 && ctl.brake && Math.abs(steerIn) > 0.3 && vf > 22;
+    // Drift: tap brake while turning to hop into it, keep holding the turn
+    // to stay in it (more steer = tighter, counter-steer = wider), let go of
+    // the turn to fire the mini-turbo.
+    if (live && ctl.drift && !k.driftDir && !k.air && k.spinT <= 0 && Math.abs(steerIn) > 0.25 && vf > 18) {
+      k.driftDir = Math.sign(steerIn);
+      k.vy = 4;
+      k.air = true;
+      k.airT = 0;
+      if (k.human) beep(300, 0.08, { type: 'triangle', vol: 0.05, slide: 200 });
+    }
+    if (k.driftDir && (Math.abs(steerIn) < 0.15 || vf < 14 || k.spinT > 0 || !live)) k.driftDir = 0;
+    const drifting = !!k.driftDir;
 
     if (!live) vf = 0;
-    else if (k.spinT > 0) vf = Math.max(0, vf - 40 * dt);
-    else if (drifting) vf = Math.max(vf - 6 * dt, 0);
-    else if (ctl.brake) vf = Math.max(-10, vf - BRAKE * dt);
+    else if (k.air) {
+      // No traction in the air: keep whatever speed you launched with.
+    } else if (k.spinT > 0) vf = Math.max(0, vf - 40 * dt);
+    else if (ctl.brake && !drifting) vf = Math.max(-10, vf - BRAKE * dt);
     else if (vf < maxV) {
       // Strong pull off the line that tapers off near top speed.
       const accel = k.boostT > 0 ? 70 : k.spec.accel * (1.25 - 0.85 * clamp(vf / maxV, 0, 1));
       vf = Math.min(maxV, vf + accel * dt);
     } else vf = Math.max(maxV, vf - 30 * dt);
 
+    // Hills: gravity slows you climbing and speeds you up coming down.
+    const { height, dist } = this.track;
+    const climb = (height[ahead(k.idx, 2)] - height[ahead(k.idx, -2)]) / (4 * dist[1]);
+    const along = fx * tan[k.idx].x + fz * tan[k.idx].y;
+    const slope = climb * along;
+    if (live && !k.air) vf -= 16 * slope * dt;
+
     let steer = steerIn;
     if (k.jamT > 0) steer = clamp(steer + Math.sin(this.time * 11 + k.i * 2) * 0.6, -1, 1);
+    if (k.emiT > 0) steer = clamp(steer + Math.sin(this.time * 17 + k.i) * 0.35, -1, 1);
     k.steerVis += (steer - k.steerVis) * Math.min(dt * 8, 1);
     // Turning needs speed, and gets harder (understeer) near top speed.
     const turnable = clamp(Math.abs(vf) / 10, 0, 1) * (1 - 0.3 * clamp((vf - 25) / 25, 0, 1));
-    const yaw = steer * k.spec.turn * turnable * (drifting ? 1.4 : 1) * Math.sign(vf || 1);
+    const driftSteer = drifting ? k.driftDir * clamp(0.75 + 0.5 * steer * k.driftDir, 0.3, 1.25) * 1.15 : steer;
+    const yaw = driftSteer * k.spec.turn * turnable * (k.air && !drifting ? 0.25 : 1) * Math.sign(vf || 1);
 
     // Tyres pull the slide back in line; the looser they are, the more the
     // kart keeps travelling its old way while the nose turns.
-    const grip = drifting ? DRIFT_GRIP : k.spec.grip;
+    const grip = k.air && !drifting ? 0 : (drifting ? DRIFT_GRIP : k.spec.grip) * (zone?.type === 'flux' ? 0.2 : 1);
+    const speedIn = Math.hypot(vf, vl);
     vl *= Math.exp(-grip * dt);
+    if (drifting && vf > 0) {
+      // A drift trades a little speed for the slide instead of bleeding it
+      // all, and the slide angle is capped so it stays controllable.
+      const speed = speedIn * (1 - 0.06 * dt);
+      const slip = clamp(Math.atan2(vl, vf), -MAX_SLIP, MAX_SLIP);
+      vf = speed * Math.cos(slip);
+      vl = speed * Math.sin(slip);
+    }
 
     // Mini-turbo: a long, committed drift pays out a boost when released.
     if (drifting) {
-      k.driftCharge = Math.min(k.driftCharge + dt, 2.5);
-      if (Math.random() < 0.5) this.#spark(k.x - fx * 1.8, 0.3, k.z - fz * 1.8, k.driftCharge > 1.6 ? 0xff9a1f : 0x6ad8ff, 1, 3);
+      k.driftCharge = Math.min(k.driftCharge + dt * (k.spec.driftRate ?? 1), 2.5);
+      if (Math.random() < 0.5) this.#spark(k.x - fx * 1.8, k.y + 0.3, k.z - fz * 1.8, k.driftCharge > 1.6 ? 0xff9a1f : 0x6ad8ff, 1, 3);
     } else if (k.wasDrifting) {
       if (k.driftCharge > 0.8) {
         k.boostT = Math.max(k.boostT, k.driftCharge > 1.6 ? 1.1 : 0.6);
@@ -692,10 +759,37 @@ export class JamKart {
       const trackH = Math.atan2(tan[k.idx].x, tan[k.idx].y);
       const off = wrapAngle(k.h - trackH);
       if (Math.abs(off) < Math.PI / 2) k.h -= off * Math.min(dt * 3, 1);
-      if (speed > 10 && Math.random() < 0.6) this.#spark(k.x + nx * 1.2, 0.5, k.z + nz * 1.2, 0xffc060, 2, 7);
+      if (speed > 10 && Math.random() < 0.6) this.#spark(k.x + nx * 1.2, k.y + 0.5, k.z + nz * 1.2, 0xffc060, 2, 7);
       if (k.scrapeT <= 0 && k.human && live && speed > 10) noise(0.12, 0.05);
       k.scrapeT = 0.15;
     }
+
+    // Height: stick to the road unless it drops away faster than gravity can
+    // follow (the ramp lip), then fly until you land.
+    const ground = groundAt(this.track, k.idx, k.x, k.z, k.lat);
+    if (k.air) {
+      k.vy -= GRAVITY * dt;
+      k.y += k.vy * dt;
+      k.airT += dt;
+      if (k.y <= ground) this.#land(k, ground);
+    } else {
+      // Leave the road when following it would need more downward pull than
+      // gravity gives (the road curves away at the lip).
+      const follow = dt > 0 ? (ground - k.y) / dt : 0;
+      if (live && dt > 0 && (follow - k.vy) / dt < -1.25 * GRAVITY) {
+        k.air = true;
+        k.airT = 0;
+        k.vy -= GRAVITY * dt;
+        k.y += k.vy * dt;
+      } else {
+        k.vy = dt > 0 ? clamp((ground - k.y) / dt, -40, 40) : 0;
+        k.y = ground;
+      }
+    }
+    const bank = this.track.bank[k.idx] * along;
+    const pitchTo = k.air ? -Math.atan(k.vy / Math.max(Math.abs(vf), 10)) * 0.7 : -Math.atan(slope);
+    k.groundPitch += (pitchTo - k.groundPitch) * Math.min(dt * 8, 1);
+    k.groundRoll += (-Math.atan(bank) - k.groundRoll) * Math.min(dt * 8, 1);
 
     // Laps: crossing the line forwards counts, backwards un-counts.
     if (k.lastIdx > SAMPLES * 0.85 && k.idx < SAMPLES * 0.15) this.#crossLine(k);
@@ -705,6 +799,83 @@ export class JamKart {
 
     const trackH = Math.atan2(tan[k.idx].x, tan[k.idx].y);
     k.wrongT = Math.abs(wrapAngle(k.h - trackH)) > 2 && vf > 2 ? k.wrongT + dt : 0;
+  }
+
+  #land(k, ground) {
+    const impact = -k.vy;
+    k.y = ground;
+    k.vy = 0;
+    k.air = false;
+    if (k.airT > 0.5) {
+      // Big air pays out a little boost.
+      k.boostT = Math.max(k.boostT, 0.6);
+      this.#big(k, 'BIG AIR!', 'go', 0.9);
+    }
+    if (impact > 8) {
+      this.#spark(k.x, k.y + 0.2, k.z, 0xffffff, 10, 7);
+      if (k.human) {
+        noise(0.18, 0.09);
+        beep(70, 0.2, { type: 'sine', vol: 0.12, slide: -30 });
+      }
+    }
+    k.airT = 0;
+  }
+
+  // Which track feature (if any) the kart is on.
+  #zoneAt(k) {
+    for (const zn of this.board.hazards.zones) {
+      if (zn.type === 'gates') continue;
+      if (k.idx >= zn.i0 && k.idx <= zn.i1 && k.lat >= zn.lat[0] - 1 && k.lat <= zn.lat[1] + 1) return zn;
+    }
+    return null;
+  }
+
+  #enterZone(k, zn, dt) {
+    if (k.human && !k.seen.has(zn.type)) {
+      k.seen.add(zn.type);
+      this.#card(k, HAZARD_INFO[zn.type]);
+    }
+    if (zn.type === 'boost') {
+      if (k.boostT < 0.3 && k.human) beep(520, 0.25, { type: 'sawtooth', vol: 0.04, slide: 700 });
+      k.boostT = Math.max(k.boostT, 0.9);
+    } else if (zn.type === 'emi') {
+      k.emiT = 0.25;
+    } else if (zn.type === 'fan') {
+      const s = this.track.side[k.idx];
+      const gust = 16 * (0.6 + 0.4 * Math.sin(this.time * 1.7));
+      k.vx += s.x * zn.push * gust * dt;
+      k.vz += s.y * zn.push * gust * dt;
+    }
+  }
+
+  // Clock-gate pistons stop anyone who hits a raised one.
+  #gates(k) {
+    if (k.gateT > 0) return;
+    for (const g of this.board.hazards.gates) {
+      const up = gateHeight(g, this.time);
+      if (up < 0.35) continue;
+      const t = this.track.tan[g.i];
+      const along = (k.x - g.x) * t.x + (k.z - g.z) * t.y;
+      const across = (k.x - g.x) * t.y - (k.z - g.z) * t.x;
+      // Only the front face stops you; a kart already half through carries on.
+      if (along < -1.6 || along > 0.2 || Math.abs(across) > 2.3 + KART_R * 0.6 || k.y > g.base + 2.4 * up) continue;
+      // Bounce back off it.
+      const fx = Math.sin(k.h);
+      const fz = Math.cos(k.h);
+      const into = k.vx * fx + k.vz * fz;
+      if (into <= 0) continue;
+      k.vx -= fx * into * 1.3;
+      k.vz -= fz * into * 1.3;
+      k.x -= fx * 1.2;
+      k.z -= fz * 1.2;
+      if (k.human && !k.seen.has('gates')) {
+        k.seen.add('gates');
+        this.#card(k, HAZARD_INFO.gates);
+      }
+      k.gateT = 1;
+      this.#hit(k, 'gate', k);
+      return;
+    }
   }
 
   #crossLine(k) {
@@ -741,7 +912,7 @@ export class JamKart {
         const dx = B.x - A.x;
         const dz = B.z - A.z;
         const d = Math.hypot(dx, dz);
-        if (d === 0 || d > KART_R * 2) continue;
+        if (d === 0 || d > KART_R * 2 || Math.abs(A.y - B.y) > 1.8) continue;
         const nx = dx / d;
         const nz = dz / d;
         const overlap = KART_R * 2 - d;
@@ -758,7 +929,7 @@ export class JamKart {
           B.vx += (j / B.spec.mass) * nx;
           B.vz += (j / B.spec.mass) * nz;
           if (-rel > 6) {
-            this.#spark((A.x + B.x) / 2, 0.8, (A.z + B.z) / 2, 0xffffff, 6, 6);
+            this.#spark((A.x + B.x) / 2, A.y + 0.8, (A.z + B.z) / 2, 0xffffff, 6, 6);
             if ((A.human || B.human) && !this.demo) beep(140, 0.1, { type: 'square', vol: 0.06, slide: -60 });
           }
         }
@@ -786,16 +957,19 @@ export class JamKart {
       b.t = Math.max(0, b.t - dt);
       b.mesh.visible = b.t <= 0;
       b.mesh.rotation.set(this.time * 0.7, this.time * 1.3, 0);
-      b.mesh.position.y = 1.4 + Math.sin(this.time * 2.5 + b.x) * 0.25;
+      b.mesh.position.y = b.y + Math.sin(this.time * 2.5 + b.x) * 0.25;
       if (b.t > 0) continue;
       for (const k of this.karts) {
-        if (k.item || Math.hypot(k.x - b.x, k.z - b.z) > 2.6) continue;
+        const full = k.item && ((k.spec.slots ?? 1) < 2 || k.item2);
+        if (full || Math.hypot(k.x - b.x, k.z - b.z) > 2.6 || Math.abs(k.y + 1 - b.y) > 3) continue;
         b.t = BOX_RESPAWN;
-        k.item = this.#roll(k);
+        const got = this.#roll(k);
+        if (k.item) k.item2 = got;
+        else k.item = got;
         k.cpuDelay = 0.8 + Math.random() * 2;
         if (k.human) {
           sfx.pickup();
-          this.#card(k, ITEMS[k.item]);
+          this.#card(k, ITEMS[got]);
         }
         break;
       }
@@ -811,7 +985,8 @@ export class JamKart {
 
   #useItem(k) {
     const item = k.item;
-    k.item = null;
+    k.item = k.item2;
+    k.item2 = null;
     k.used++;
     const loud = !this.demo && k.human;
     if (item === 'compress') {
@@ -849,11 +1024,11 @@ export class JamKart {
       k.jamT = JAM_TIME * k.spec.recover;
       this.#big(k, 'JAMMED!', 'bad', k.jamT);
     } else {
-      k.spinT = SPIN_TIME * k.spec.recover;
+      k.spinT = SPIN_TIME * k.spec.recover * (type === 'gate' ? 0.4 : 1);
       k.vx *= 0.35;
       k.vz *= 0.35;
-      this.#spark(k.x, 1, k.z, 0xff5a3d, 14, 8);
-      this.#big(k, 'BLOCKED BY FIREWALL', 'bad', 1.2);
+      this.#spark(k.x, k.y + 1, k.z, 0xff5a3d, 14, 8);
+      this.#big(k, type === 'gate' ? 'CLOCK GATE!' : 'BLOCKED BY FIREWALL', 'bad', 1.2);
       if (k.human) sfx.hit();
     }
   }
@@ -884,10 +1059,11 @@ export class JamKart {
       new THREE.BoxGeometry(7, 2.2, 0.5),
       new THREE.MeshBasicMaterial({ map: this.brickTex, transparent: true, opacity: 0.95 })
     );
-    mesh.position.set(x, 1.1, z);
+    const y = surfaceY(this.track, i, lat);
+    mesh.position.set(x, y + 1.1, z);
     mesh.rotation.y = Math.atan2(tan[i].x, tan[i].y);
     this.scene.add(mesh);
-    this.walls.push({ mesh, x, z, i, lat, owner: k, grace: 0.8, life: FIREWALL_LIFE });
+    this.walls.push({ mesh, x, z, y, i, lat, owner: k, grace: 0.8, life: FIREWALL_LIFE });
   }
 
   #updateWalls(dt) {
@@ -902,7 +1078,7 @@ export class JamKart {
         const dz = k.z - w.z;
         const along = dx * tan[w.i].x + dz * tan[w.i].y;
         const across = dx * side[w.i].x + dz * side[w.i].y;
-        if (Math.abs(along) < 1.4 && Math.abs(across) < 4.6) {
+        if (Math.abs(along) < 1.4 && Math.abs(across) < 4.6 && Math.abs(k.y - w.y) < 2.4) {
           this.#hit(k, 'wall', w.owner);
           w.life = 0;
         }
@@ -924,7 +1100,7 @@ export class JamKart {
       new THREE.MeshBasicMaterial({ color: 0xff3a5a, transparent: true, opacity: 0.9, side: THREE.DoubleSide, blending: THREE.AdditiveBlending, depthWrite: false })
     );
     mesh.rotation.x = -Math.PI / 2;
-    mesh.position.set(k.x, 0.3, k.z);
+    mesh.position.set(k.x, k.y + 0.3, k.z);
     this.scene.add(mesh);
     this.rings.push({ mesh, t: 0, range });
   }
@@ -951,7 +1127,9 @@ export class JamKart {
     const p = k.parts;
     if (k.spinT > 0) k.spinA += dt * 14;
     else k.spinA = 0;
-    p.group.position.set(k.x, 0, k.z);
+    p.group.position.set(k.x, k.y, k.z);
+    p.group.rotation.x = k.groundPitch;
+    p.group.rotation.z = k.groundRoll;
     // Drifting karts point into the slide.
     p.group.rotation.y = k.h + k.spinA + clamp(-k.vl * 0.04, -0.4, 0.4);
     p.body.rotation.z = k.roll;
@@ -974,8 +1152,8 @@ export class JamKart {
     const h = k.h + wrapAngle(travel - k.h) * 0.5;
     const fx = Math.sin(h);
     const fz = Math.cos(h);
-    const target = new THREE.Vector3(k.x - fx * 9, 4.2, k.z - fz * 9);
-    const look = new THREE.Vector3(k.x + fx * 7, 1.2, k.z + fz * 7);
+    const target = new THREE.Vector3(k.x - fx * 9, k.y + 4.2, k.z - fz * 9);
+    const look = new THREE.Vector3(k.x + fx * 7, k.y + 1.2, k.z + fz * 7);
     const t = Math.min(dt * 6, 1);
     k.camPos.lerp(target, t);
     k.camLook.lerp(look, t);
@@ -990,10 +1168,10 @@ export class JamKart {
   #placeDemoCam(dt) {
     const k = this.karts.find((o) => o.place === 0) ?? this.karts[0];
     const a = this.time * 0.25;
-    const target = new THREE.Vector3(k.x + Math.sin(a) * 16, 6, k.z + Math.cos(a) * 16);
+    const target = new THREE.Vector3(k.x + Math.sin(a) * 16, k.y + 6, k.z + Math.cos(a) * 16);
     const t = Math.min(dt * 2, 1);
     this.demoCam.position.lerp(target, dt > 0.5 ? 1 : t);
-    this.demoCam.lookAt(k.x, 1, k.z);
+    this.demoCam.lookAt(k.x, k.y + 1, k.z);
   }
 
   #card(k, item) {
@@ -1031,7 +1209,12 @@ export class JamKart {
       h.slot.textContent = item ? item.icon : '';
       h.slot.style.color = item ? item.color : '';
       h.item.classList.toggle('full', !!item);
-      h.static.classList.toggle('on', k.jamT > 0);
+      const item2 = k.item2 && ITEMS[k.item2];
+      h.slot2.textContent = item2 ? item2.icon : '';
+      h.slot2.style.color = item2 ? item2.color : '';
+      h.slot2.style.display = (k.spec.slots ?? 1) > 1 ? '' : 'none';
+      h.static.classList.toggle('on', k.jamT > 0 || k.emiT > 0);
+      h.static.classList.toggle('light', k.jamT <= 0 && k.emiT > 0);
       h.drift.classList.toggle('on', k.driftCharge > 0);
       h.drift.classList.toggle('hot', k.driftCharge > 1.6);
       h.drift.firstElementChild.style.width = `${clamp(k.driftCharge / 1.6, 0, 1) * 100}%`;
