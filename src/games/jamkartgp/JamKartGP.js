@@ -8,8 +8,14 @@ import { makeKart, MODELS, PALETTE } from './kart.js';
 const RACERS = 8;
 const GRAVITY = 30;
 const LAPS = 2; // a real-circuit lap is long, so two make a booth-sized race
-const BOOST_BONUS = 20; // compression adds this to a kart's top speed
-const BRAKE = 48;
+const BOOST_BONUS = 9; // compression adds this to a kart's top speed (m/s)
+const BRAKE = 32;
+// Sideways grip limit: how hard a kart can corner (m/s², ~2 g for a grippy
+// kart, scaled by each model's grip). Hairpins need braking; drifting lets
+// you carry a bit more speed through.
+const LAT_G = 20;
+const DRIFT_LAT = 1.35;
+const TAP = 0.25; // a brake press shorter than this is a drift tap
 const SELECT_TIMEOUT = 30;
 const EDGE = TRACK_W / 2 + 3.5; // karts can run wide onto the verge, up to the barrier
 const ROAD = TRACK_W / 2 - 1.3; // lanes the CPU drivers keep to
@@ -138,6 +144,17 @@ export class JamKartGP {
     }
   }
 
+  // The how-to screen's HAZARDS setting.
+  setOptions({ hazards = 'ALL ON' } = {}) {
+    const presets = {
+      'ALL ON': { rain: true, boost: true, gates: true },
+      'NO GATES': { rain: true, boost: true },
+      'BOOST ONLY': { boost: true },
+      OFF: {},
+    };
+    this.board.setHazards(presets[hazards] ?? presets['ALL ON']);
+  }
+
   // Called by the arcade when the how-to screen's mode picker is confirmed.
   setMode(index) {
     this.players = index + 1;
@@ -178,7 +195,7 @@ export class JamKartGP {
       const col = slot % 2;
       const back = 3 + row * 6 + col * 2;
       const idx = (SAMPLES + 4 - back) % SAMPLES;
-      const lat = col === 0 ? 3.4 : -3.4;
+      const lat = col === 0 ? 2.8 : -2.8;
       const p = pts[idx];
       Object.assign(k, {
         x: p.x + side[idx].x * lat, z: p.y + side[idx].y * lat,
@@ -232,7 +249,7 @@ export class JamKartGP {
     this.boxes = [];
     for (const f of [0.14, 0.38, 0.6, 0.82]) {
       const i = Math.floor(f * SAMPLES);
-      for (const lat of [-5.4, -1.8, 1.8, 5.4]) {
+      for (const lat of [-4.2, -1.4, 1.4, 4.2]) {
         const p = this.track.pts[i];
         const s = this.track.side[i];
         const mesh = new THREE.Mesh(geo, mat);
@@ -305,6 +322,7 @@ export class JamKartGP {
           <div class="jk-place" data-place>1ST</div>
           <div class="jk-lap" data-lap>LAP 1/${LAPS}</div>
         </div>
+        <div class="jk-speed" data-speed>0<small>KM/H</small></div>
         <div class="jk-item" data-item><div class="slot" data-slot></div><div class="slot2" data-slot2></div><div class="key" data-key></div></div>
         <div class="jk-drift" data-drift><i></i></div>
         <div class="jk-card" data-card><b></b><span></span></div>
@@ -337,7 +355,7 @@ export class JamKartGP {
         const h = root.querySelector(`[data-half="${i}"]`);
         const q = (k) => h.querySelector(`[data-${k}]`);
         return {
-          root: h, tag: q('tag'), place: q('place'), lap: q('lap'), item: q('item'), slot: q('slot'), slot2: q('slot2'), key: q('key'), card: q('card'), big: q('big'), static: q('static'), drift: q('drift'), cardT: 0, bigT: 0,
+          root: h, tag: q('tag'), place: q('place'), lap: q('lap'), speed: q('speed'), item: q('item'), slot: q('slot'), slot2: q('slot2'), key: q('key'), card: q('card'), big: q('big'), static: q('static'), drift: q('drift'), cardT: 0, bigT: 0,
           who: q('who'), mname: q('mname'), blurb: q('blurb'), stats: q('stats'), perk: q('perk'), colors: q('colors'), ready: q('ready'),
         };
       }),
@@ -404,8 +422,10 @@ export class JamKartGP {
       fire ||= [0, 2, 3, 5].some((b) => p.buttons[b]?.pressed);
     }
     const pressed = fire && !k.prevFire;
-    // Tapping brake while turning starts a drift; holding it still brakes.
-    const drift = brake && !k.prevBrake;
+    // A quick tap of brake (released within TAP s) starts a drift; holding
+    // it just brakes.
+    if (brake && !k.prevBrake) k.brakeAt = this.time;
+    const drift = !brake && k.prevBrake && this.time - (k.brakeAt ?? -9) < TAP;
     k.prevFire = fire;
     k.prevBrake = brake;
     return { steer: clamp(steer, -1, 1), brake, fire: pressed, drift };
@@ -422,14 +442,14 @@ export class JamKartGP {
     }
     for (const w of this.walls) {
       const d = this.#along(k, w.x, w.z);
-      if (d > 0 && d < 35) k.cpuLane = w.lat > 0 ? -4.5 : 4.5;
+      if (d > 0 && d < 35) k.cpuLane = w.lat > 0 ? -3.5 : 3.5;
     }
     // Track features: dodge flux, aim for boost strips, pick the open gate.
     for (const zn of this.board.hazards.zones) {
       const d = (zn.i0 - k.idx + SAMPLES) % SAMPLES;
       if (d > 45) continue;
       const mid = (zn.lat[0] + zn.lat[1]) / 2;
-      if (zn.type === 'rain') k.cpuLane = mid > 0 ? -4.5 : 4.5;
+      if (zn.type === 'rain') k.cpuLane = mid > 0 ? -3.5 : 3.5;
       if (zn.type === 'boost' && !k.item) k.cpuLane = clamp(mid, -ROAD, ROAD);
     }
     for (const g of this.board.hazards.gates) {
@@ -444,7 +464,7 @@ export class JamKartGP {
     for (const o of this.karts) {
       if (o === k) continue;
       const d = this.#along(k, o.x, o.z);
-      if (d > 0 && d < 9 && Math.abs(o.lat - k.lat) < 2.6 && o.v < k.v) k.cpuLane = clamp(o.lat + (o.lat > 0 ? -4 : 4), -ROAD, ROAD);
+      if (d > 0 && d < 9 && Math.abs(o.lat - k.lat) < 2.6 && o.v < k.v) k.cpuLane = clamp(o.lat + (o.lat > 0 ? -3.2 : 3.2), -ROAD, ROAD);
     }
     const look = ahead(k.idx, 10 + Math.floor(Math.max(k.v, 0) * 0.3));
     const tx = pts[look].x + side[look].x * k.cpuLane;
@@ -457,7 +477,7 @@ export class JamKartGP {
     const humans = this.karts.filter((o) => o.human);
     if (humans.length) {
       const gap = Math.max(...humans.map((o) => o.prog)) - k.prog; // + means a player is ahead
-      pace += clamp(gap * 0.035, -8, 4);
+      pace += clamp(gap * 0.025, -5, 2.5);
     }
     k.maxV = (this.demo ? top - 2 - k.i * 0.2 : pace) * slow;
 
@@ -472,7 +492,29 @@ export class JamKartGP {
         (k.item === 'firewall' && chaser) ||
         k.cpuDelay < -8;
     }
-    return { steer: clamp(-err * 2.6, -1, 1), brake: bend > 1.3 && k.v > 38, fire };
+    return { steer: clamp(-err * 2.6, -1, 1), brake: this.#needsBrake(k), fire };
+  }
+
+  // How hard kart k can corner right now (m/s²).
+  #latGrip(k, zone, drifting) {
+    const offRoad = Math.abs(k.lat) > TRACK_W / 2 + 0.3;
+    return LAT_G * (k.spec.grip / 15) * (drifting ? DRIFT_LAT : 1) * (zone?.type === 'rain' ? 0.55 : 1) * (offRoad ? 0.7 : 1);
+  }
+
+  // CPU braking: look down the road and brake if a corner ahead needs a
+  // lower speed than we could scrub off before reaching it.
+  #needsBrake(k) {
+    const { curv, dist } = this.track;
+    const grip = LAT_G * (k.spec.grip / 15) * 0.85;
+    for (let j = 3; j < 70; j += 3) {
+      const c = Math.abs(curv[ahead(k.idx, j)]);
+      if (c < 1e-3) continue;
+      const vMax = Math.sqrt(grip / c);
+      if (k.v <= vMax) continue;
+      const room = j * dist[1];
+      if ((k.v * k.v - vMax * vMax) / (2 * BRAKE * 0.85) >= room - 2) return true;
+    }
+    return false;
   }
 
   // Signed distance of a point ahead of kart k along its heading.
@@ -666,17 +708,16 @@ export class JamKartGP {
     const offRoad = Math.abs(k.lat) > TRACK_W / 2 + 0.3;
     const maxV = (k.boostT > 0 ? top + BOOST_BONUS : top) * (k.jamT > 0 ? 0.8 : 1) * (offRoad ? 0.62 : 1);
     const steerIn = k.spinT > 0 ? 0 : ctl.steer;
-    // Drift: tap brake while turning to hop into it, keep holding the turn
-    // to stay in it (more steer = tighter, counter-steer = wider), let go of
-    // the turn to fire the mini-turbo.
-    if (live && ctl.drift && !k.driftDir && !k.air && k.spinT <= 0 && Math.abs(steerIn) > 0.25 && vf > 18) {
+    // Drift: tap brake while turning to kick into it (just a little bounce of
+    // the body, no jump), keep holding the turn to stay in it (more steer =
+    // tighter, counter-steer = wider), let go of the turn for the mini-turbo.
+    if (live && ctl.drift && !k.driftDir && !k.air && k.spinT <= 0 && Math.abs(steerIn) > 0.25 && vf > 12) {
       k.driftDir = Math.sign(steerIn);
-      k.vy = 4;
-      k.air = true;
-      k.airT = 0;
+      k.hopT = 0.22;
       if (k.human) kartSfx.hop();
     }
-    if (k.driftDir && (Math.abs(steerIn) < 0.15 || vf < 14 || k.spinT > 0 || !live)) k.driftDir = 0;
+    if (k.driftDir && (Math.abs(steerIn) < 0.15 || vf < 9 || k.spinT > 0 || !live)) k.driftDir = 0;
+    k.hopT = Math.max(0, (k.hopT ?? 0) - dt);
     const drifting = !!k.driftDir;
 
     if (!live) vf = 0;
@@ -702,9 +743,13 @@ export class JamKartGP {
     if (k.emiT > 0) steer = clamp(steer + Math.sin(this.time * 17 + k.i) * 0.35, -1, 1);
     k.steerVis += (steer - k.steerVis) * Math.min(dt * 8, 1);
     // Turning needs speed, and gets harder (understeer) near top speed.
-    const turnable = clamp(Math.abs(vf) / 10, 0, 1) * (1 - 0.3 * clamp((vf - 25) / 25, 0, 1));
+    const turnable = clamp(Math.abs(vf) / 6, 0, 1);
     const driftSteer = drifting ? k.driftDir * clamp(0.75 + 0.5 * steer * k.driftDir, 0.3, 1.25) * 1.15 : steer;
-    const yaw = driftSteer * k.spec.turn * turnable * (k.air && !drifting ? 0.25 : 1) * Math.sign(vf || 1);
+    let yaw = driftSteer * k.spec.turn * turnable * (k.air && !drifting ? 0.25 : 1) * Math.sign(vf || 1);
+    // Tyres can only push so hard sideways: at speed the turn is capped by
+    // grip, so fast corners need braking (or a drift).
+    const yawCap = this.#latGrip(k, zone, drifting) / Math.max(Math.abs(vf), 4);
+    yaw = clamp(yaw, -yawCap, yawCap);
 
     // Tyres pull the slide back in line; the looser they are, the more the
     // kart keeps travelling its old way while the nose turns.
@@ -790,18 +835,10 @@ export class JamKartGP {
       k.airT += dt;
       if (k.y <= ground) this.#land(k, ground);
     } else {
-      // Leave the road when following it would need more downward pull than
-      // gravity gives (the road curves away at the lip).
-      const follow = dt > 0 ? (ground - k.y) / dt : 0;
-      if (live && dt > 0 && (follow - k.vy) / dt < -1.25 * GRAVITY) {
-        k.air = true;
-        k.airT = 0;
-        k.vy -= GRAVITY * dt;
-        k.y += k.vy * dt;
-      } else {
-        k.vy = dt > 0 ? clamp((ground - k.y) / dt, -40, 40) : 0;
-        k.y = ground;
-      }
+      // A road circuit has no jumps: karts stay planted on the tarmac and
+      // verges (running wide used to throw them off the verge's slope).
+      k.vy = dt > 0 ? clamp((ground - k.y) / dt, -40, 40) : 0;
+      k.y = ground;
     }
     const bank = this.track.bank[k.idx] * along;
     const pitchTo = k.air ? -Math.atan(k.vy / Math.max(Math.abs(vf), 10)) * 0.7 : -Math.atan(slope);
@@ -872,7 +909,7 @@ export class JamKartGP {
       const along = (k.x - g.x) * t.x + (k.z - g.z) * t.y;
       const across = (k.x - g.x) * t.y - (k.z - g.z) * t.x;
       // Only the front face stops you; a kart already half through carries on.
-      if (along < -1.6 || along > 0.2 || Math.abs(across) > 2.3 + KART_R * 0.6 || k.y > g.base + 2.4 * up) continue;
+      if (along < -1.6 || along > 0.2 || Math.abs(across) > 1.9 + KART_R * 0.6 || k.y > g.base + 2.4 * up) continue;
       // Bounce back off it.
       const fx = Math.sin(k.h);
       const fz = Math.cos(k.h);
@@ -1068,7 +1105,7 @@ export class JamKartGP {
       this.brickTex.colorSpace = THREE.SRGBColorSpace;
     }
     const mesh = new THREE.Mesh(
-      new THREE.BoxGeometry(7, 2.2, 0.5),
+      new THREE.BoxGeometry(5.5, 2.2, 0.5),
       new THREE.MeshBasicMaterial({ map: this.brickTex, transparent: true, opacity: 0.95 })
     );
     const y = surfaceY(this.track, i, lat);
@@ -1090,7 +1127,7 @@ export class JamKartGP {
         const dz = k.z - w.z;
         const along = dx * tan[w.i].x + dz * tan[w.i].y;
         const across = dx * side[w.i].x + dz * side[w.i].y;
-        if (Math.abs(along) < 1.4 && Math.abs(across) < 4.6 && Math.abs(k.y - w.y) < 2.4) {
+        if (Math.abs(along) < 1.4 && Math.abs(across) < 3.8 && Math.abs(k.y - w.y) < 2.4) {
           this.#hit(k, 'wall', w.owner);
           w.life = 0;
         }
@@ -1146,6 +1183,7 @@ export class JamKartGP {
     p.group.rotation.y = k.h + k.spinA + clamp(-k.vl * 0.04, -0.4, 0.4);
     p.body.rotation.z = k.roll;
     p.body.rotation.x = k.pitch;
+    p.body.position.y = Math.sin(((k.hopT ?? 0) / 0.22) * Math.PI) * 0.25;
     for (const w of p.wheels) w.rotation.x += (k.v * dt) / 0.5;
     k.squash += ((k.boostT > 0 ? 0.72 : 1) - k.squash) * Math.min(dt * 10, 1);
     p.group.scale.set(1 / Math.sqrt(k.squash), 1, k.squash);
@@ -1217,6 +1255,7 @@ export class JamKartGP {
       h.place.textContent = ORDINAL[k.place];
       h.place.classList.toggle('first', k.place === 0);
       h.lap.textContent = `LAP ${clamp(k.lap + 1, 1, LAPS)}/${LAPS}`;
+      h.speed.firstChild.nodeValue = Math.round(Math.hypot(k.vx, k.vz) * 3.6);
       const item = k.item && ITEMS[k.item];
       h.slot.textContent = item ? item.icon : '';
       h.slot.style.color = item ? item.color : '';

@@ -83,7 +83,7 @@ function template(cfg) {
         <ul class="howto-list">
           ${cfg.howto.map(([k, v]) => `<li><b>${k}</b><span>${v}</span></li>`).join('')}
         </ul>
-        ${cfg.modes ? `<div class="modes" id="modes"></div>` : ''}
+        ${cfg.modes || cfg.options ? `<div class="modes" id="modes"></div>` : ''}
         <div class="blink">PRESS START WHEN READY</div>
       </div>
     </div>
@@ -137,12 +137,22 @@ export function runArcade(cfg) {
   let result = null;
   let entry = null; // { idle } while the name form is up
   let lastRank = -1;
-  let mode = 0; // index into cfg.modes, remembered between rounds
+  // How-to screen settings: the player-count picker plus any game options.
+  // All remembered between rounds.
+  let mode = 0; // index into cfg.modes
+  const optVals = (cfg.options ?? []).map(() => 0);
+  let row = 0;
+  const settingRows = () => [
+    ...(cfg.modes ? [{ label: 'PLAYERS', choices: cfg.modes, get: () => mode, set: (v) => (mode = v) }] : []),
+    ...(cfg.options ?? []).map((o, n) => ({ label: o.label, choices: o.choices, get: () => optVals[n], set: (v) => (optVals[n] = v) })),
+  ];
 
   function renderModes() {
+    const rows = settingRows();
     $('modes').innerHTML =
-      cfg.modes.map((m, i) => `<span class="${i === mode ? 'on' : ''}">${m}</span>`).join('') +
-      '<div class="hint-small">◀ ▶ to choose</div>';
+      rows
+        .map((r, n) => `<div class="mode-row ${n === row && rows.length > 1 ? 'sel' : ''}">${rows.length > 1 ? `<b>${r.label}</b>` : ''}${r.choices.map((c, i) => `<span class="${i === r.get() ? 'on' : ''}">${c}</span>`).join('')}</div>`)
+        .join('') + `<div class="hint-small">${rows.length > 1 ? '▲ ▼ pick a setting · ◀ ▶ change it' : '◀ ▶ to choose'}</div>`;
   }
 
   const show = (id, on = true) => $(id).classList.toggle('hidden', !on);
@@ -207,7 +217,7 @@ export function runArcade(cfg) {
     sfx.start();
     flash();
     game = new cfg.Game(view, hud);
-    if (cfg.modes) renderModes();
+    if (cfg.modes || cfg.options) renderModes();
     setState('howto');
   }
 
@@ -323,10 +333,18 @@ export function runArcade(cfg) {
       }
       case 'howto':
         game.update(dt, input, false);
-        if (cfg.modes) {
+        if (cfg.modes || cfg.options) {
+          const rows = settingRows();
+          const dy = (input.pressed('down') ? 1 : 0) - (input.pressed('up') ? 1 : 0);
+          if (dy && row + dy >= 0 && row + dy < rows.length) {
+            row += dy;
+            renderModes();
+            sfx.move();
+          }
           const mx = input.menuX();
-          if (mx && mode + mx >= 0 && mode + mx < cfg.modes.length) {
-            mode += mx;
+          const r = rows[row];
+          if (mx && r.get() + mx >= 0 && r.get() + mx < r.choices.length) {
+            r.set(r.get() + mx);
             renderModes();
             sfx.move();
           }
@@ -335,6 +353,7 @@ export function runArcade(cfg) {
         else if (input.pressed('start') && stateTime > 0.5) {
           sfx.select();
           if (cfg.modes) game.setMode(mode);
+          if (cfg.options) game.setOptions?.(Object.fromEntries(cfg.options.map((o, n) => [o.key, o.choices[optVals[n]]])));
           setState(game.updateSelect ? 'select' : 'countdown');
         } else if (stateTime > 30) startDemo();
         break;

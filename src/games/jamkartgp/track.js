@@ -4,10 +4,10 @@ import { buildDetails } from './details.js';
 // Jam Kart GP: a Grand Prix circuit in rolling forest, loosely inspired by the
 // classic Belgian track: a hairpin after the start, a dip and steep climb, a
 // long straight, a chicane, a hairpin, fast sweepers and a bus-stop chicane.
-export const TRACK_W = 16;
+export const TRACK_W = 12; // kart-track width
 export const SAMPLES = 800;
 
-const SCALE = 0.73; // about 1.3 km, so a lap takes ~32 s
+const SCALE = 0.56; // about 1 km, so a lap takes ~40 s at kart speeds
 const CONTROL = [
   [0, 10], [0, -80], [6, -108], [24, -118], [40, -106], [44, -70], [46, -30], [40, 0], [54, 22], [48, 46], [62, 76],
   [100, 150], [128, 205], [152, 226], [146, 252], [160, 274], [192, 288], [220, 270], [218, 240], [198, 230],
@@ -22,8 +22,8 @@ export const FOG = { color: 0xb7c6d3, near: 140, far: 520 };
 // Track features. u is the share of a lap (0 = start line), lat the sideways
 // span (+ is left). Delete a line (or set it to []) to switch a feature off.
 export const HAZARDS = {
-  rain: [{ u0: 0.425, u1: 0.455, lat: [0.5, 8] }, { u0: 0.098, u1: 0.12, lat: [-8, -0.5] }],
-  boost: [{ u0: 0.02, u1: 0.035, lat: [1, 6.5] }, { u0: 0.225, u1: 0.24, lat: [-6.5, -1] }, { u0: 0.7, u1: 0.715, lat: [-2.8, 2.8] }],
+  rain: [{ u0: 0.425, u1: 0.455, lat: [0.5, 6] }, { u0: 0.098, u1: 0.12, lat: [-6, -0.5] }],
+  boost: [{ u0: 0.02, u1: 0.035, lat: [1, 5] }, { u0: 0.225, u1: 0.24, lat: [-5, -1] }, { u0: 0.7, u1: 0.715, lat: [-2.2, 2.2] }],
   gates: [{ u0: 0.845 }],
 };
 
@@ -31,8 +31,8 @@ export const HAZARDS = {
 // steep climb, the long drag up the straight, then a long descent through
 // the far side and back up to the start.
 const PROFILE = [
-  [0, 4], [0.06, 4], [0.09, 4.5], [0.14, 1], [0.155, 0.6], [0.2, 9], [0.28, 12], [0.32, 12.5], [0.36, 10],
-  [0.4, 7], [0.47, 4], [0.55, 2], [0.6, 1], [0.7, 2], [0.8, 4], [0.9, 4], [1, 4],
+  [0, 3.5], [0.06, 3.5], [0.09, 4], [0.14, 1], [0.155, 0.6], [0.2, 7.5], [0.28, 10], [0.32, 10.5], [0.36, 8.5],
+  [0.4, 6], [0.47, 3.5], [0.55, 2], [0.6, 1], [0.7, 2], [0.8, 3.5], [0.9, 3.5], [1, 3.5],
 ];
 function heightAt(u) {
   for (let k = 1; k < PROFILE.length; k++) {
@@ -195,7 +195,7 @@ const worldVert = /* glsl */ `
 // chequered start line and painted grid slots.
 const roadFrag = /* glsl */ `
   uniform vec3 uFogColor;
-  uniform float uFogNear, uFogFar, uLength;
+  uniform float uFogNear, uFogFar, uLength, uHalf;
   uniform float uGrid[8];
   uniform float uGridSide[8];
   varying vec2 vUv;
@@ -219,12 +219,12 @@ const roadFrag = /* glsl */ `
       float c = mod(floor(u * 16.0) + floor(v * 2.0), 2.0);
       col = mix(vec3(0.05), vec3(0.95), c);
     }
-    float lat = 8.0 - u * 16.0;
+    float lat = uHalf - u * uHalf * 2.0;
     for (int k = 0; k < 8; k++) {
       float gv = uGrid[k];
       float d = v - gv;
-      bool box = (abs(d) < 0.18 && lat * uGridSide[k] > 1.6 && lat * uGridSide[k] < 5.4) ||
-                 (d > 0.0 && d < 2.2 && abs(lat * uGridSide[k] - 5.3) < 0.12);
+      bool box = (abs(d) < 0.18 && lat * uGridSide[k] > 1.1 && lat * uGridSide[k] < 4.5) ||
+                 (d > 0.0 && d < 2.2 && abs(lat * uGridSide[k] - 4.4) < 0.12);
       if (box) col = vec3(0.92);
     }
     float fog = smoothstep(uFogNear, uFogFar, length(vWorld - cameraPosition));
@@ -287,8 +287,8 @@ let terrainGrass;
 function buildTerrain(scene, track) {
   const size = 760;
   const n = 190;
-  const cx = 70;
-  const cz = 40;
+  const cx = 55;
+  const cz = 32;
   const heights = new Float32Array((n + 1) * (n + 1));
   const hills = (x, z) =>
     3 + 5 * Math.sin(x * 0.012 + 1.3) * Math.cos(z * 0.01 - 0.7) + 2.5 * Math.sin(x * 0.031 + z * 0.023) + 1.2 * Math.cos(z * 0.05 - x * 0.02);
@@ -361,6 +361,7 @@ export function buildBoard(scene, track) {
       uFogNear: { value: FOG.near },
       uFogFar: { value: FOG.far },
       uLength: { value: track.length },
+      uHalf: { value: TRACK_W / 2 },
       uGrid: { value: grid },
       uGridSide: { value: gridSide },
     },
@@ -387,6 +388,10 @@ export function buildBoard(scene, track) {
     hazards,
     terrainY,
     setStartLights: details.setStartLights,
+    setHazards(on) {
+      hazards.set(on);
+      details.setSigns(on);
+    },
     update(time) {
       for (const m of hazards.decals) m.uniforms.uTime.value = time;
       hazards.animate(time);
@@ -407,6 +412,7 @@ export function gateHeight(gate, time) {
 function buildHazards(scene, track, reserved) {
   const zones = [];
   const decals = [];
+  const meshes = { rain: [], boost: [], gates: [] };
   const decal = (kind, z) => {
     const mat = new THREE.ShaderMaterial({
       vertexShader: worldVert,
@@ -419,7 +425,9 @@ function buildHazards(scene, track, reserved) {
     });
     const i0 = sampleAt(z.u0);
     const i1 = sampleAt(z.u1);
-    scene.add(new THREE.Mesh(strip(track, z.lat[1], z.lat[0], (k, lat) => surfaceY(track, k, lat) + 0.06, { i0, i1 }), mat));
+    const mesh = new THREE.Mesh(strip(track, z.lat[1], z.lat[0], (k, lat) => surfaceY(track, k, lat) + 0.06, { i0, i1 }), mat);
+    scene.add(mesh);
+    meshes[kind === 0 ? 'rain' : 'boost'].push(mesh);
     decals.push(mat);
     return { i0, i1, lat: z.lat };
   };
@@ -432,11 +440,11 @@ function buildHazards(scene, track, reserved) {
     const i = sampleAt(z.u0);
     const t = track.tan[i];
     const stripe = new THREE.MeshBasicMaterial({ color: 0xff3b4a });
-    [-5.2, 0, 5.2].forEach((lat, n) => {
+    [-4, 0, 4].forEach((lat, n) => {
       const g = new THREE.Group();
-      const block = new THREE.Mesh(new THREE.BoxGeometry(4.6, 2.4, 1.4), metal);
+      const block = new THREE.Mesh(new THREE.BoxGeometry(3.8, 2.4, 1.4), metal);
       block.position.y = 1.2;
-      const top = new THREE.Mesh(new THREE.BoxGeometry(4.7, 0.25, 1.5), stripe);
+      const top = new THREE.Mesh(new THREE.BoxGeometry(3.9, 0.25, 1.5), stripe);
       top.position.y = 2.45;
       g.add(block, top);
       const p = track.pts[i];
@@ -446,12 +454,21 @@ function buildHazards(scene, track, reserved) {
       g.position.set(x, surfaceY(track, i, lat), zz);
       g.rotation.y = Math.atan2(t.x, t.y);
       scene.add(g);
+      meshes.gates.push(g);
       gates.push({ i, lat, x, z: zz, phase: n / 3, mesh: g, base: g.position.y });
     });
-    zones.push({ type: 'gates', i0: i - 4, i1: i + 4, lat: [-8, 8] });
+    zones.push({ type: 'gates', i0: i - 4, i1: i + 4, lat: [-TRACK_W / 2, TRACK_W / 2] });
   }
   const animate = (time) => {
     for (const g of gates) g.mesh.position.y = g.base - 2.6 * (1 - gateHeight(g, time));
   };
-  return { zones, decals, gates, animate };
+  const hazards = { zones, decals, gates, animate };
+  // The in-game HAZARDS setting: show only the chosen features, and give
+  // the game (and CPU drivers) only their zones and gates.
+  hazards.set = (on) => {
+    hazards.zones = zones.filter((z) => on[z.type]);
+    hazards.gates = on.gates ? gates : [];
+    for (const [type, list] of Object.entries(meshes)) for (const m of list) m.visible = !!on[type];
+  };
+  return hazards;
 }

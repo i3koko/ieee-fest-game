@@ -105,11 +105,15 @@ export function buildDetails(scene, track, terrainY, reserved) {
   buildBillboards(scene, track, at, heading, terrainY, reserved, rand, fits);
   buildCameraTowers(scene, track, place, reserved, at, fits);
   buildComms(scene, track, at, terrainY, reserved, updates);
-  buildSigns(scene, track, at, heading, terrainY);
+  const signs = buildSigns(scene, track, at, heading, terrainY);
   buildForest(scene, terrainY, trackDist, free, rand);
 
   updates.push((t) => crowd(t));
-  return { update: (t) => updates.forEach((f) => f(t)), setStartLights: lights };
+  return {
+    update: (t) => updates.forEach((f) => f(t)),
+    setStartLights: lights,
+    setSigns: (on) => Object.entries(signs).forEach(([type, list]) => list.forEach((g) => (g.visible = !!on[type]))),
+  };
 }
 
 // ------------------------------------------------------------------ sky
@@ -516,17 +520,19 @@ function buildSigns(scene, track, at, heading, terrainY) {
     g.position.set(x, terrainY(x, z), z);
     g.rotation.y = heading(i) + Math.PI;
     scene.add(g);
+    return g;
   };
+  const signs = { rain: [], gates: [] };
   const list = [
-    ['WET', 'TRACK AHEAD', '#5fc8ff', HAZARDS.rain?.[0]?.u0],
-    ['WET', 'TRACK AHEAD', '#5fc8ff', HAZARDS.rain?.[1]?.u0],
-    ['GATES', 'OPEN ON THE BEAT', '#ff3b4a', HAZARDS.gates?.[0]?.u0],
+    ['rain', 'WET', 'TRACK AHEAD', '#5fc8ff', HAZARDS.rain?.[0]?.u0],
+    ['rain', 'WET', 'TRACK AHEAD', '#5fc8ff', HAZARDS.rain?.[1]?.u0],
+    ['gates', 'GATES', 'OPEN ON THE BEAT', '#ff3b4a', HAZARDS.gates?.[0]?.u0],
   ];
-  for (const [title, sub, color, u] of list) {
+  for (const [type, title, sub, color, u] of list) {
     if (u === undefined) continue;
     const i = (sampleAt(u) - 28 + SAMPLES) % SAMPLES;
     const out = track.curv[i] > 0 ? -1 : 1;
-    board(signTexture(title, sub, color), i, out * (TRACK_W / 2 + 3.5), 3.6, 1.8, 1.8);
+    signs[type].push(board(signTexture(title, sub, color), i, out * (TRACK_W / 2 + 3.5), 3.6, 1.8, 1.8));
   }
   // Braking boards before the two hairpins and the chicane.
   for (const u of [0.066, 0.296, 0.346, 0.889]) {
@@ -546,6 +552,7 @@ function buildSigns(scene, track, at, heading, terrainY) {
       board(tex, i, out * (TRACK_W / 2 + 2.5), 1.1, 1.1, 0.9);
     }
   }
+  return signs;
 }
 
 // ------------------------------------------------------------------ forest

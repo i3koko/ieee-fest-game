@@ -1310,3 +1310,53 @@ body {
   border-radius: 9px;
   background: rgba(0, 0, 0, 0.45);
 }
+
+/* Jam Kart GP speedometer */
+.jk-speed {
+  position: absolute;
+  top: 11vh;
+  right: 1.8vw;
+  font-family: var(--display);
+  font-style: italic;
+  font-size: 2.6em;
+  line-height: 1;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+.jk-speed small {
+  display: block;
+  font-family: var(--ui);
+  font-style: normal;
+  font-size: 0.32em;
+  font-weight: 800;
+  letter-spacing: 0.16em;
+  color: var(--accent);
+}
+.jk-half.p1 .jk-speed { right: auto; left: 1.8vw; text-align: left; }
+.selecting .jk-speed { display: none; }
+
+/* How-to settings rows */
+.modes .mode-row {
+  flex-basis: 100%;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: center;
+  gap: 0.6em;
+}
+.modes .mode-row b {
+  min-width: 6.5em;
+  text-align: right;
+  font-size: 0.85em;
+  letter-spacing: 0.14em;
+  opacity: 0.5;
+}
+.modes .mode-row.sel b {
+  opacity: 1;
+  color: var(--accent);
+}
+.modes .mode-row.sel b::before { content: '▸ '; }
+.modes .mode-row span {
+  padding: 0.35em 0.9em;
+  font-size: 0.9em;
+}

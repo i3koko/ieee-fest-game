@@ -1,43 +1,44 @@
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 
-// The three karts (modelled in tools/build_karts.py) and how each one drives.
-// Stats are 1-5 for the select screen; the numbers below them are the physics.
+// The karts (modelled in tools/build_karts.py) and how each one drives.
+// Stats are 1-5 for the select screen; the numbers below them are the physics,
+// in metres and seconds: top speeds of ~103-112 km/h, like a fast race kart.
 export const MODELS = [
   {
     id: 'fiber', name: 'FIBER', file: 'kart-fiber.glb',
     blurb: 'Light through glass: the fastest kart, but it takes wide turns.',
     perk: 'Compression boost lasts 50% longer',
     stats: { SPEED: 5, HANDLING: 2, ACCEL: 3, WEIGHT: 2 },
-    top: 47, turn: 2.0, accel: 25, mass: 1, grip: 13, boost: 1.5, recover: 1, jamRange: 1,
+    top: 31, turn: 2.0, accel: 17, mass: 1, grip: 13, boost: 1.5, recover: 1, jamRange: 1,
   },
   {
     id: '5g', name: '5G', file: 'kart-5g.glb',
     blurb: 'Small and nimble: sharp turns and the quickest start.',
     perk: 'Shakes off jams and spins 40% faster',
     stats: { SPEED: 3, HANDLING: 5, ACCEL: 5, WEIGHT: 1 },
-    top: 43, turn: 2.75, accel: 32, mass: 0.8, grip: 18, boost: 1, recover: 0.6, jamRange: 1,
+    top: 28.5, turn: 2.75, accel: 22, mass: 0.8, grip: 18, boost: 1, recover: 0.6, jamRange: 1,
   },
   {
     id: 'satellite', name: 'SATELLITE', file: 'kart-satellite.glb',
     blurb: 'Heavy and steady: slow to get going, but it wins every shove.',
     perk: 'Its jammer reaches 1.6× further',
     stats: { SPEED: 4, HANDLING: 3, ACCEL: 2, WEIGHT: 5 },
-    top: 45, turn: 2.2, accel: 21, mass: 1.8, grip: 15, boost: 1, recover: 1, jamRange: 1.6,
+    top: 29.5, turn: 2.2, accel: 14.5, mass: 1.8, grip: 15, boost: 1, recover: 1, jamRange: 1.6,
   },
   {
     id: 'radio', name: 'RADIO', file: 'kart-radio.glb',
     blurb: 'A classic all-rounder with a whip antenna: good at everything.',
     perk: 'Carries two power-ups at once',
     stats: { SPEED: 3, HANDLING: 3, ACCEL: 3, WEIGHT: 3 },
-    top: 44.5, turn: 2.35, accel: 27, mass: 1.2, grip: 15, boost: 1, recover: 1, jamRange: 1, slots: 2,
+    top: 29.5, turn: 2.35, accel: 18.5, mass: 1.2, grip: 15, boost: 1, recover: 1, jamRange: 1, slots: 2,
   },
   {
     id: 'laser', name: 'LASER', file: 'kart-laser.glb',
     blurb: 'A beam of light on wheels: quick and light, but slippery.',
     perk: 'Drift boosts charge 50% faster',
     stats: { SPEED: 4, HANDLING: 4, ACCEL: 4, WEIGHT: 1 },
-    top: 45.5, turn: 2.45, accel: 29, mass: 0.75, grip: 11, boost: 1, recover: 1, jamRange: 1, driftRate: 1.5,
+    top: 30, turn: 2.45, accel: 20, mass: 0.75, grip: 11, boost: 1, recover: 1, jamRange: 1, driftRate: 1.5,
   },
 ];
 

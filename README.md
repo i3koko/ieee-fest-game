@@ -6,7 +6,7 @@ Communication-themed 3D arcade games for the browser, built with three.js + Vite
 
 - **Wave Rider** (`waverider.html`): you are a radio signal riding down a neon tunnel. Reshape your wave with ◀ ▶ (frequency) and ▲ ▼ (amplitude) to fit wave-shaped gaps in oncoming walls. You hear your wave too: pitch follows frequency, brightness and loudness follow amplitude. A synthwave soundtrack, generated live in the browser, builds with your speed and combo.
 - **Jam Kart** (`jamkart.html`): an 8-kart race round a circuit board, for 1 player (full screen, vs 7 CPUs) or 2 (split screen, plus 6 CPUs). Players pick one of five Blender-built karts and a colour: **FIBER** (fastest, longer boosts), **5G** (sharpest turns, shrugs off hits), **SATELLITE** (heaviest, longest-range jammer), **RADIO** (all-rounder, holds two power-ups) or **LASER** (light and quick, fastest drift charge). Karts carry momentum and drift: tap brake while turning, hold the turn, let go for a mini-turbo. The track has hills, a jump and banked corners, and power-ups are comms tricks (Jammer, Firewall, Compression, ECC Shield). Each one explains itself when picked up.
-- **Jam Kart GP** (`jamkartgp.html`): Jam Kart v2, kept separate from v1 with its own leaderboard. Same karts, drifting and power-ups, on a 1.3 km Grand Prix circuit loosely inspired by Spa: a hairpin after the start, a dip and steep climb, a long straight, chicanes, a hairpin and fast sweepers, through forested hills. Daylight racetrack dressing: asphalt with grid slots, red/white kerbs, gravel traps, armco, grandstands with a crowd, pits with a satellite ground station, start lights that count down, a bridge, sponsor boards, braking boards and TV camera towers. Running wide onto the grass slows you. Two laps.
+- **Jam Kart GP** (`jamkartgp.html`): Jam Kart v2, kept separate from v1 with its own leaderboard. Same karts, drifting and power-ups, on a 1.3 km Grand Prix circuit loosely inspired by Spa: a hairpin after the start, a dip and steep climb, a long straight, chicanes, a hairpin and fast sweepers, through forested hills. Daylight racetrack dressing: asphalt with grid slots, red/white kerbs, gravel traps, armco, grandstands with a crowd, pits with a satellite ground station, start lights that count down, a bridge, sponsor boards, braking boards and TV camera towers. Karts run at real race-kart pace (top ~105-112 km/h, ~55 km/h through hairpins): cornering is limited by grip, so brake for the tight corners or drift through them, and running wide onto the grass slows you. A km/h speedometer shows your speed. Two laps.
 - **Dead Zone** (`deadzone.html`): drive an emergency cell truck through a blacked-out city and deploy portable towers to reconnect people. Teaches coverage, path loss, line of sight and frequency reuse / co-channel interference (SINR).
 - **Packet Racer** (`packetracer.html`): you are a data packet racing your TTL. Dodge collisions, thread firewalls, pick low-latency vs safe routes at router forks (time slows down so you can read them), and grab ECC shields.
 
@@ -79,9 +79,9 @@ The game recolours any material named `Paint` or `Glow` to the player's chosen c
 
 ## Jam Kart track features
 
-Delete a line (or set it to `[]`) in `HAZARDS` near the top of the track file to switch that feature off. Its sign goes too, and the CPUs stop reacting to it.
+**Jam Kart GP**: pick on the how-to screen (▲ ▼ to the HAZARDS row, ◀ ▶ to change): ALL ON, NO GATES, BOOST ONLY or OFF. Features are `rain` (wet, slippery patches), `boost` (fibre strips) and `gates` (clock-gate pistons), defined in `HAZARDS` in `src/games/jamkartgp/track.js`.
 
-**Jam Kart GP** (`src/games/jamkartgp/track.js`): `rain` (wet, slippery patches), `boost` (fibre strips), `gates` (clock-gate pistons).
+**Jam Kart v1**: delete a line (or set it to `[]`) in `HAZARDS` near the top of the track file to switch that feature off. Its sign goes too, and the CPUs stop reacting to it.
 
 **Jam Kart v1** (`src/games/jamkart/track.js`):
 
