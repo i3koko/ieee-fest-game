@@ -112,11 +112,11 @@ function engineWave(tilt) {
   return (waves[tilt] = ac.createPeriodicWave(real, imag));
 }
 
-// The top speed of each gear: geometric steps, with top gear running a bit
-// past the kart's top speed so it never sits on the limiter.
+// The top speed of each gear: geometric steps, with a tall top gear so
+// cruising at the kart's top speed sits mid-revs, not up by the limiter.
 function gearTops(gears, top) {
   const r = 0.28 ** (1 / (gears - 1));
-  return Array.from({ length: gears }, (_, g) => top * 1.08 * r ** (gears - 1 - g));
+  return Array.from({ length: gears }, (_, g) => top * 1.2 * r ** (gears - 1 - g));
 }
 
 export function createEngine(modelId) {
@@ -171,6 +171,7 @@ export function createEngine(modelId) {
   let load = 0;
   let cutUntil = 0; // throttle cut during an upshift
   let wasOn = false;
+  let cruiseT = 0; // how long it's been holding a steady speed
 
   // A few soft exhaust pops (quicker karts only, and not every time).
   const pop = (chance) => {
@@ -212,8 +213,14 @@ export function createEngine(modelId) {
         frac = Math.min(v / tops[gear], 1);
       } else frac = Math.min(v / top, 1.1);
       frac = Math.max(frac, 0.05) + (boost ? 0.05 : 0);
-      // A slight wander so holding a speed isn't one flat drone.
-      const wander = 1 + 0.006 * Math.sin(t * 1.7) + 0.004 * Math.sin(t * 4.3 + 1);
+      // Holding a steady speed, the engine settles back: quieter and
+      // darker, letting the wind take over, so flat out isn't one long
+      // drone. Any acceleration, braking or shift brings it straight back.
+      cruiseT = throttle && Math.abs(accel) < 1.5 && frac > 0.5 ? cruiseT + dt : 0;
+      const settle = Math.min(Math.max((cruiseT - 0.6) / 1.6, 0), 1);
+      const ease = settle * settle * (3 - 2 * settle);
+      // A slight wander (more when settled) so the note never sits still.
+      const wander = 1 + (0.006 * Math.sin(t * 1.7) + 0.004 * Math.sin(t * 4.3 + 1)) * (1 + 1.5 * ease);
       const f = (e.idle + (e.red - e.idle) * frac) * wander;
       const cut = t < cutUntil;
 
@@ -223,9 +230,10 @@ export function createEngine(modelId) {
       sub.frequency.setTargetAtTime(f / 2, t, 0.035);
       lfo.frequency.setTargetAtTime(Math.max(4, f / 6), t, 0.05);
       const bright = cut ? 0 : load;
-      lp.frequency.setTargetAtTime(e.cut[0] + (e.cut[1] - e.cut[0]) * (0.25 * frac + 0.75 * bright), t, 0.05);
-      const level = on ? e.vol * (0.5 + 0.3 * frac + 0.35 * load) * (cut ? 0.45 : 1) : 0;
-      amp.gain.setTargetAtTime(level, t, cut ? 0.015 : 0.06);
+      const open = e.cut[0] + (e.cut[1] - e.cut[0]) * (0.25 * frac + 0.75 * bright);
+      lp.frequency.setTargetAtTime(open + (e.cut[0] * 1.1 - open) * ease, t, 0.15);
+      const level = on ? e.vol * (0.5 + 0.3 * frac + 0.35 * load) * (cut ? 0.45 : 1) * (1 - 0.6 * ease) : 0;
+      amp.gain.setTargetAtTime(level, t, cut ? 0.015 : ease > 0 ? 0.3 : 0.06);
       // Lifting off at high revs can crackle too.
       if (wasOn && !throttle && frac > 0.6) pop(0.25);
       wasOn = throttle;
@@ -234,7 +242,7 @@ export function createEngine(modelId) {
       skid.gain.setTargetAtTime(squeal * 0.05, t, 0.05);
       skidF.frequency.setTargetAtTime(1500 + Math.abs(slip) * 40, t, 0.05);
       const r = Math.min(v / top, 1.3);
-      wind.gain.setTargetAtTime(on ? Math.max(r - 0.4, 0) * 0.05 + (air ? 0.03 : 0) : 0, t, 0.1);
+      wind.gain.setTargetAtTime(on ? Math.max(r - 0.4, 0) * (0.05 + 0.03 * ease) + (air ? 0.03 : 0) : 0, t, 0.1);
       windF.frequency.setTargetAtTime(400 + r * 900, t, 0.1);
       stat.gain.setTargetAtTime(on && jammed ? 0.06 : 0, t, 0.03);
     },
