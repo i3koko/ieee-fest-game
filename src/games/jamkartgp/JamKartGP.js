@@ -5,6 +5,7 @@ import { music } from '../../core/music.js';
 import { TRACK_W, SAMPLES, FOG, buildTrack, buildBoard, locate, ahead, groundAt, surfaceY, gateHeight } from './track.js';
 import { makeKart, MODELS, PALETTE, limitSuspension } from './kart.js';
 import { buildWeather } from './weather.js';
+import { buildAtmosphere } from './atmosphere.js';
 
 const RACERS = 8;
 const GRAVITY = 30;
@@ -137,6 +138,8 @@ export class JamKartGP {
     this.#buildBoxes();
     this.#buildSparks();
     this.#buildSpray();
+    // Tyre smoke, skid marks, marshals, the TV helicopter and confetti.
+    this.atmo = buildAtmosphere(this.scene, this.track, this.board.terrainY);
     this.walls = [];
     this.rings = [];
     this.karts = Array.from({ length: RACERS }, (_, i) => this.#makeKart(i));
@@ -197,6 +200,7 @@ export class JamKartGP {
   // Staggered two-wide grid behind the line. Players take the middle slots.
   #placeGrid() {
     const { pts, tan, side } = this.track;
+    this.atmo.reset();
     const slots = [...Array(RACERS).keys()].filter((s) => this.demo || !HUMAN_SLOTS.slice(0, this.players).includes(s));
     this.karts.forEach((k) => {
       const slot = k.human ? HUMAN_SLOTS[k.i] : slots.shift();
@@ -785,6 +789,7 @@ export class JamKartGP {
     for (const l of this.board.lights) l.mat.color.copy(l.base).multiplyScalar(0.6 + 0.4 * Math.sin(this.time * 3 + l.phase));
     this.#updateWeather(dt, live);
     this.#updateSpray(dt);
+    this.atmo.update(dt, this.time, this.karts, { wet: this.wet, live, raceTime: this.raceTime, finishing: this.firstFinish !== null });
 
     if (this.demo) this.#placeDemoCam(dt);
     else {
@@ -862,6 +867,18 @@ export class JamKartGP {
     k.h -= yaw * dt;
     k.v = vf;
     k.vl = vl;
+    // Tyres scrabbling: the moment you stamp on the brakes at speed, a spin,
+    // a big slide or the launch off the line.
+    // (CPU drivers pulse the brakes, so only one lock-up every few seconds.)
+    k.lockT = Math.max(0, (k.lockT ?? 0) - dt);
+    k.lockCool = Math.max(0, (k.lockCool ?? 0) - dt);
+    if (ctl.brake && !k.wasBraking && vfIn > 20 && k.lockCool === 0) {
+      k.lockT = 0.35;
+      k.lockCool = 4;
+    }
+    k.wasBraking = ctl.brake;
+    const lockUp = ctl.brake && k.lockT > 0;
+    k.skid = live && Math.abs(vfIn) > 2 && (lockUp || k.spinT > 0 || Math.abs(vl) > 2.5 || (this.raceTime < 1.2 && !ctl.brake));
     k.x += k.vx * dt;
     k.z += k.vz * dt;
 
@@ -1041,6 +1058,7 @@ export class JamKartGP {
       k.finishTime = this.raceTime;
       if (this.firstFinish === null) this.firstFinish = this.raceTime;
       k.finalPlace = this.karts.filter((o) => o.finished).length - 1;
+      if (k.human || k.finalPlace === 0) this.atmo.confetti(k.human ? 1 : 0.5);
       if (k.human) {
         this.#big(k, `FINISH! ${ORDINAL[k.finalPlace]}`, k.finalPlace === 0 ? 'win' : k.finalPlace < 3 ? 'go' : '', 99);
         kartSfx.finish(k.finalPlace);
