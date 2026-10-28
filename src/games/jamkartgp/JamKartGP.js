@@ -1079,6 +1079,7 @@ export class JamKartGP {
     if (this.demo) return;
     if (k.lap >= LAPS && !k.finished) {
       k.finished = true;
+      k.jamT = 0;
       k.finishTime = this.raceTime;
       if (this.firstFinish === null) this.firstFinish = this.raceTime;
       k.finalPlace = this.karts.filter((o) => o.finished).length - 1;
@@ -1198,13 +1199,15 @@ export class JamKartGP {
       const range = JAM_RANGE * k.spec.jamRange;
       this.#ring(k, range);
       if (loud) kartSfx.jammer();
-      const victims = this.karts.filter((o) => o !== k && Math.hypot(o.x - k.x, o.z - k.z) <= range);
+      const victims = this.karts.filter((o) => o !== k && !o.finished && Math.hypot(o.x - k.x, o.z - k.z) <= range);
       for (const o of victims) this.#hit(o, 'jam', k);
       if (k.human) this.#big(k, victims.length ? `JAMMED ${victims.length}!` : 'OUT OF RANGE', victims.length ? 'go' : 'warn', 1.2);
     }
   }
 
   #hit(k, type, by) {
+    // Once over the line a kart is out of the fight: nothing can touch it.
+    if (k.finished) return;
     if (k.shieldT > 0) {
       k.shieldT = 0;
       this.#big(k, 'ECC REPAIRED IT!', 'go', 1.2);
@@ -1495,6 +1498,7 @@ export class JamKartGP {
     return {
       title,
       score: this.#score(best),
+      detail: best.spec.name, // the kart, for the leaderboard
       stats,
       fact:
         'A jammer wins by drowning every receiver nearby in noise louder than the signal, which is why jamming is illegal in most countries. ' +

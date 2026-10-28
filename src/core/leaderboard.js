@@ -36,16 +36,17 @@ export function qualifies(game, score) {
 }
 
 // One row per person: a repeat ID only replaces their row if it beats it.
+// `detail` is optional extra shown on the board (the kart, in the kart games).
 // Returns the 0-based rank of that person's row (-1 if it fell off).
-export function addScore(game, { name, id }, score) {
+export function addScore(game, { name, id, detail }, score) {
   const at = Date.now();
-  save(logKey(game), [...load(logKey(game)), { name, id, score, at }]);
+  save(logKey(game), [...load(logKey(game)), { name, id, detail, score, at }]);
 
   let scores = getScores(game);
   const sameId = (s) => id && s.id?.toLowerCase() === id.toLowerCase();
   const prev = scores.find(sameId);
   if (prev && prev.score >= score) return scores.indexOf(prev);
-  const entry = { name, id, score, at };
+  const entry = { name, id, detail, score, at };
   scores = scores.filter((s) => !sameId(s));
   scores.push(entry);
   scores.sort((a, b) => b.score - a.score);
@@ -63,6 +64,6 @@ export function clearScores(game) {
 // Every signed entry as CSV, for picking winners after the event.
 export function entriesCsv(game) {
   const cell = (v) => `"${String(v ?? '').replace(/"/g, '""')}"`;
-  const rows = load(logKey(game)).map((e) => [e.name, e.id, e.score, new Date(e.at).toISOString()].map(cell).join(','));
-  return ['name,id,score,time', ...rows].join('\n');
+  const rows = load(logKey(game)).map((e) => [e.name, e.id, e.detail, e.score, new Date(e.at).toISOString()].map(cell).join(','));
+  return ['name,id,detail,score,time', ...rows].join('\n');
 }

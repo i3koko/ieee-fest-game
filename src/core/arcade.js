@@ -113,7 +113,7 @@ function template(cfg) {
             <label><span>ID</span><input id="entry-id" maxlength="12" spellcheck="false" placeholder="Student ID" /></label>
           </div>
           <div class="entry-error" id="entry-error"></div>
-          <div class="hint-small">ENTER save · ESC skip · only your name is shown on screen</div>
+          <div class="hint-small">ENTER save · ESC skip · your name and ID are shown on the board</div>
         </form>
         <div class="blink" id="results-continue">PRESS START</div>
       </div>
@@ -197,10 +197,13 @@ export function runArcade(cfg) {
   function boardRows(highlight = -1) {
     const rows = getScores(cfg.id);
     if (!rows.length) return '<tr><td class="empty">No scores yet. Be the first!</td></tr>';
+    // Name, ID and (where the game gives one, like the kart) a detail column.
+    const details = rows.some((s) => s.detail);
     return rows
       .map(
         (s, i) =>
-          `<tr class="${i === highlight ? 'me' : ''}"><td>${String(i + 1).padStart(2, '0')}</td><td>${esc(s.name)}</td><td>${s.score.toLocaleString()}</td></tr>`
+          `<tr class="${i === highlight ? 'me' : ''}"><td>${String(i + 1).padStart(2, '0')}</td><td>${esc(s.name)}</td><td class="id">${esc(s.id ?? '')}</td>` +
+          `${details ? `<td class="detail">${esc(s.detail ?? '')}</td>` : ''}<td>${s.score.toLocaleString()}</td></tr>`
       )
       .join('');
   }
@@ -317,7 +320,7 @@ export function runArcade(cfg) {
   function finishEntry(save) {
     entry = null;
     document.activeElement?.blur();
-    lastRank = save ? addScore(cfg.id, { name: cleanName(), id: cleanId() }, result.score) : -1;
+    lastRank = save ? addScore(cfg.id, { name: cleanName(), id: cleanId(), detail: result.detail }, result.score) : -1;
     save ? sfx.start() : sfx.back();
     showBoard();
   }

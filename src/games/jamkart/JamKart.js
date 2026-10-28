@@ -1301,6 +1301,7 @@ export class JamKart {
     return {
       title,
       score: this.#score(best),
+      detail: best.spec.name, // the kart, for the leaderboard
       stats,
       fact:
         'A jammer wins by drowning every receiver nearby in noise louder than the signal, which is why jamming is illegal in most countries. ' +

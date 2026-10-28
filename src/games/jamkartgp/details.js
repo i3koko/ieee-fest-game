@@ -30,61 +30,66 @@ export async function loadProps() {
   );
 }
 
-// 'LOGO' panels show the ComSoc logo on IEEE blue.
-const SPONSORS = [
-  ['LOGO', '', '#00629b', '#ffffff'],
-  ['IEEE', 'ComSoc AUS', '#00629b', '#ffffff'],
-  ['IEEE FEST', '2026', '#111418', '#ff4a3d'],
-  ['5G NR', 'faster than your kart', '#ffffff', '#00629b'],
-  ['Wi-Fi 7', '46 Gbit/s', '#7a1fa2', '#ffffff'],
-  ['SIGNAL', 'strength: full bars', '#ffcc00', '#111418'],
-  ['FIBRE', 'light speed data', '#111418', '#9dff3a'],
-  ['ComSoc', 'Communications Society', '#ffffff', '#ff4a3d'],
-  ['AUS', 'IEEE Student Branch', '#8a1538', '#ffffff'],
+// Every banner and billboard carries the IEEE ComSoc logo: white on IEEE
+// blue, or blue on white, alternating.
+const IEEE_BLUE = '#00629b';
+const LOOKS = [
+  { bg: IEEE_BLUE, logo: '#ffffff' },
+  { bg: '#ffffff', logo: IEEE_BLUE },
 ];
 
-// Draws one sponsor into a w x h panel at (x, 0), never stretched: text is
-// sized to fit, and the logo keeps its proportions.
-function drawSponsor(g, [title, sub, bg, fg], x, w, h) {
-  g.fillStyle = bg;
-  g.fillRect(x, 0, w, h);
-  if (title === 'LOGO' && comsocLogo) {
-    const scale = Math.min((w * 0.82) / comsocLogo.width, (h * 0.8) / comsocLogo.height);
-    const lw = comsocLogo.width * scale;
-    const lh = comsocLogo.height * scale;
-    g.drawImage(comsocLogo, x + (w - lw) / 2, (h - lh) / 2, lw, lh);
-    return;
-  }
-  const label = title === 'LOGO' ? 'IEEE ComSoc' : title;
-  g.fillStyle = fg;
-  g.textAlign = 'center';
-  g.textBaseline = 'middle';
-  const fit = (text, size, weight, maxW) => {
-    g.font = `${weight} ${size}px "Arial Black", Arial, sans-serif`;
-    const k = Math.min(1, maxW / Math.max(g.measureText(text).width, 1));
-    g.font = `${weight} ${size * k}px "Arial Black", Arial, sans-serif`;
-  };
-  fit(label, h * (sub ? 0.46 : 0.6), 900, w * 0.86);
-  g.fillText(label, x + w / 2, sub ? h * 0.42 : h * 0.52);
-  if (sub) {
-    fit(sub, h * 0.17, 700, w * 0.86);
-    g.fillText(sub, x + w / 2, h * 0.8);
-  }
+// The logo file is white; recolour it once per colour on its own canvas.
+const tinted = {};
+function logoIn(color) {
+  if (!comsocLogo) return null;
+  if (tinted[color]) return tinted[color];
+  const c = document.createElement('canvas');
+  c.width = comsocLogo.width;
+  c.height = comsocLogo.height;
+  const g = c.getContext('2d');
+  g.drawImage(comsocLogo, 0, 0);
+  g.globalCompositeOperation = 'source-in';
+  g.fillStyle = color;
+  g.fillRect(0, 0, c.width, c.height);
+  tinted[color] = c;
+  return c;
 }
 
-// Artwork for a banner of the given width/height ratio: as many ~4:1
-// sponsor panels as fit side by side, so nothing gets squished.
-function sponsorTexture(start, aspect) {
+// One logo panel, w x h at (x, 0). The logo keeps its proportions.
+function drawLogo(g, look, x, w, h) {
+  g.fillStyle = look.bg;
+  g.fillRect(x, 0, w, h);
+  const logo = logoIn(look.logo);
+  if (logo) {
+    const scale = Math.min((w * 0.82) / logo.width, (h * 0.72) / logo.height);
+    const lw = logo.width * scale;
+    const lh = logo.height * scale;
+    g.drawImage(logo, x + (w - lw) / 2, (h - lh) / 2, lw, lh);
+    return;
+  }
+  // No logo file: the name in text instead.
+  g.fillStyle = look.logo;
+  g.textAlign = 'center';
+  g.textBaseline = 'middle';
+  g.font = `900 ${h * 0.5}px "Arial Black", Arial, sans-serif`;
+  const k = Math.min(1, (w * 0.86) / Math.max(g.measureText('IEEE ComSoc').width, 1));
+  g.font = `900 ${h * 0.5 * k}px "Arial Black", Arial, sans-serif`;
+  g.fillText('IEEE ComSoc', x + w / 2, h * 0.52);
+}
+
+// Artwork for a banner of the given width/height ratio. Overhead banners
+// (`repeat`) run the logo along their length in ~4:1 panels; everything else
+// shows it once, centred.
+function logoTexture(n, aspect, repeat = false) {
   const h = Math.min(256, Math.floor(4096 / aspect));
   const w = Math.round(h * aspect);
-  const panels = Math.max(1, Math.round(aspect / 4));
+  const look = LOOKS[n % LOOKS.length];
+  const panels = repeat ? Math.max(1, Math.round(aspect / 4)) : 1;
   return canvasTexture(w, h, (g) => {
-    for (let n = 0; n < panels; n++) {
-      const x0 = Math.round((n * w) / panels);
-      const x1 = Math.round(((n + 1) * w) / panels);
-      drawSponsor(g, SPONSORS[(start + n) % SPONSORS.length], x0, x1 - x0, h);
-      g.fillStyle = 'rgba(0,0,0,0.6)';
-      g.fillRect(x1 - 2, 0, 4, h);
+    for (let p = 0; p < panels; p++) {
+      const x0 = Math.round((p * w) / panels);
+      const x1 = Math.round(((p + 1) * w) / panels);
+      drawLogo(g, look, x0, x1 - x0, h);
     }
   });
 }
@@ -276,16 +281,15 @@ function buildArmco(scene, track) {
 
 // ------------------------------------------------------------------ buildings
 
-function bannerize(obj, sponsorIdx) {
-  let n = sponsorIdx;
+function bannerize(obj, look, repeat = false) {
+  let n = look;
   obj.traverse((o) => {
     if (o.isMesh && /^Banner/.test(o.name)) {
       // Size the artwork to this banner's real proportions.
       o.geometry.computeBoundingBox();
       const size = o.geometry.boundingBox.getSize(new THREE.Vector3());
       const [long, short] = [size.x, size.y, size.z].sort((a, b) => b - a);
-      const map = sponsorTexture(n, long / short);
-      n += Math.max(1, Math.round(long / short / 4));
+      const map = logoTexture(n++, long / short, repeat);
       // glTF models expect textures the other way up from canvas art.
       map.flipY = false;
       o.material = new THREE.MeshBasicMaterial({ map, color: 0xdddddd });
@@ -367,7 +371,7 @@ function buildPits(scene, track, place, reserved, at, fits) {
 // The start gantry over the line; setStartLights(n) lights n of 5 pairs.
 function buildStartGantry(scene, track) {
   if (!props.start) return () => {};
-  const g = bannerize(props.start.clone(true), 0);
+  const g = bannerize(props.start.clone(true), 0, true);
   const i = 3;
   const p = track.pts[i];
   const t = track.tan[i];
@@ -393,7 +397,7 @@ function buildStartGantry(scene, track) {
 function buildBridge(scene, track) {
   if (!props.bridge) return;
   for (const u of [0.25, 0.75]) {
-    const b = bannerize(props.bridge.clone(true), u > 0.5 ? 4 : 1);
+    const b = bannerize(props.bridge.clone(true), u > 0.5 ? 1 : 0, true);
     const i = sampleAt(u);
     const p = track.pts[i];
     const t = track.tan[i];
@@ -415,7 +419,7 @@ function buildBillboards(scene, track, at, heading, terrainY, reserved, rand, fi
     const [x, z] = at(i, lat);
     if (!fits(i, lat, 9, 1, 0.4) || !reserved.every(([px, pz, pr]) => Math.hypot(px - x, pz - z) > pr + 4)) continue;
     const g = new THREE.Group();
-    const board = new THREE.Mesh(new THREE.BoxGeometry(9, 2.2, 0.2), [back, back, back, back, new THREE.MeshBasicMaterial({ map: sponsorTexture(n, 9 / 2.2), color: 0xdddddd }), back]);
+    const board = new THREE.Mesh(new THREE.BoxGeometry(9, 2.2, 0.2), [back, back, back, back, new THREE.MeshBasicMaterial({ map: logoTexture(n, 9 / 2.2), color: 0xdddddd }), back]);
     board.position.y = 2.6;
     g.add(board);
     for (const lx of [-3.5, 3.5]) {

@@ -383,6 +383,16 @@ body {
   letter-spacing: 0.04em;
   text-transform: uppercase;
 }
+.leaderboard td.id,
+.leaderboard td.detail {
+  opacity: 0.7;
+  font-size: 0.8em;
+  letter-spacing: 0.06em;
+}
+.leaderboard td.detail {
+  color: var(--accent);
+  font-weight: 800;
+}
 .leaderboard td.empty {
   text-align: center;
   color: #fff;

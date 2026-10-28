@@ -280,7 +280,7 @@ export function makeKart(modelId, color) {
   // Head and tail lights: dull lenses by day, glowing (and blooming) at
   // night, with a soft flare round each headlight.
   const spots = findLamps(modelId, body, group);
-  const headMat = new THREE.MeshBasicMaterial({ color: 0x9a9890 });
+  const headMat = new THREE.MeshBasicMaterial({ color: 0x5e5c57 });
   const tailMat = new THREE.MeshBasicMaterial({ color: 0x4a0806 });
   const flareMat = new THREE.SpriteMaterial({ map: glowTexture(), color: 0xfff0d8, transparent: true, opacity: 0, blending: THREE.AdditiveBlending, depthWrite: false });
   const flares = [];
