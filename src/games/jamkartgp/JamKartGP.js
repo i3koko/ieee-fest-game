@@ -528,7 +528,9 @@ export class JamKartGP {
     };
     const leader = Math.max(...this.karts.map((k) => k.prog)) / this.track.length;
     const x = this.forceWeather ?? (this.demo ? 0.6 + 0.65 * Math.sin(this.time / 30) : live || this.endTimer !== null ? leader : 0);
-    this.weather.set(0.12 + 0.88 * smooth(0.45, 1.0, x), smooth(0.95, 1.3, x), dt);
+    // Clouds build over most of the first lap; the rain sets in gradually
+    // through the start of the second.
+    this.weather.set(0.12 + 0.88 * smooth(0.3, 1.0, x), smooth(0.85, 1.4, x), dt);
     this.wet = this.weather.wet;
     this.board.setWet(this.wet);
 
@@ -540,7 +542,7 @@ export class JamKartGP {
     centre.divideScalar(watched.length);
     this.weather.update(dt, this.time, focuses, centre);
 
-    if (!this.demo && live && !this.rainWarned && x > 0.85) {
+    if (!this.demo && live && !this.rainWarned && x > 0.75) {
       this.rainWarned = true;
       for (const k of humans) {
         this.#big(k, 'RAIN IS COMING!', 'warn', 2);

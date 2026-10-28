@@ -184,12 +184,13 @@ export function setRain(amount) {
   if (!rainGain) {
     const src = noiseLoop();
     const bp = filt('bandpass', 2600, 0.4);
-    const lp = filt('lowpass', 6000, 0.5);
+    const lp = filt('lowpass', 4500, 0.5);
     rainGain = ac.createGain();
     rainGain.gain.value = 0;
     src.connect(bp).connect(lp).connect(rainGain).connect(out);
   }
-  rainGain.gain.setTargetAtTime(amount * 0.12, now(), 0.4);
+  // Kept well under the engines and music: a patter, not a roar.
+  rainGain.gain.setTargetAtTime(amount * amount * 0.04, now(), 0.8);
 }
 
 export const kartSfx = {

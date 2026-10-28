@@ -133,8 +133,9 @@ export function buildWeather(scene, renderer, { rainDrops = 2200 } = {}) {
   const WIND = new THREE.Vector3(2.5, 0, 1.2);
 
   // ---------------------------------------------------------------- reflections
-  // Sky reflection maps for clear, cloudy and stormy skies; the nearest one
-  // is used as the scene's environment (wet tarmac, paint, metal).
+  // One sky reflection map (wet tarmac, paint, metal), from a part-cloudy
+  // sky. It dims as the storm rolls in rather than swapping maps, which
+  // would make the whole scene's lighting jump.
   const pmrem = new THREE.PMREMGenerator(renderer);
   const envScene = new THREE.Scene();
   // Reflections use the sky without the sun, or its warm glow tints
@@ -142,12 +143,9 @@ export function buildWeather(scene, renderer, { rainDrops = 2200 } = {}) {
   const envSky = new THREE.Mesh(new THREE.SphereGeometry(50, 32, 16), skyMat.clone());
   envSky.material.uniforms.uSun = { value: new THREE.Vector3(0, -1, 0) };
   envScene.add(envSky);
-  const envs = [0, 0.55, 1].map((c) => {
-    envSky.material.uniforms.uCloud.value = c;
-    return pmrem.fromScene(envScene, 0.02).texture;
-  });
+  envSky.material.uniforms.uCloud.value = 0.35;
+  scene.environment = pmrem.fromScene(envScene, 0.02).texture;
   pmrem.dispose();
-  scene.environment = envs[0];
   scene.environmentIntensity = 0.55;
 
   // ---------------------------------------------------------------- state
@@ -178,7 +176,7 @@ export function buildWeather(scene, renderer, { rainDrops = 2200 } = {}) {
     },
     // Ease towards the target weather (it rolls in over several seconds).
     set(cloud, wet, dt) {
-      const k = Math.min(dt * 0.4, 1);
+      const k = Math.min(dt * 0.25, 1);
       state.cloud += (cloud - state.cloud) * k;
       state.wet += (wet - state.wet) * k;
     },
@@ -194,7 +192,7 @@ export function buildWeather(scene, renderer, { rainDrops = 2200 } = {}) {
       scene.fog.near = lerp(CLEAR.near, STORM.near, wet);
       scene.fog.far = lerp(CLEAR.far, STORM.far, wet);
       if (scene.background?.isColor) scene.background.copy(scene.fog.color);
-      scene.environment = envs[cloud < 0.3 ? 0 : cloud < 0.8 ? 1 : 2];
+      scene.environmentIntensity = lerp(0.6, 0.35, cloud);
       if (sun.castShadow) sun.shadow.intensity = lerp(1, 0.35, cloud);
 
       // Shadows follow the action.
