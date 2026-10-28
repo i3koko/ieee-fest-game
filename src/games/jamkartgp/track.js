@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { buildDetails } from './details.js';
+import { litByHeadlights } from './headlights.js';
 
 // Jam Kart GP: a Grand Prix circuit in rolling forest, loosely inspired by the
 // classic Belgian track: a hairpin after the start, a dip and steep climb, a
@@ -436,6 +437,8 @@ export function buildBoard(scene, track) {
       .replace('#include <common>', `#include <common>\n${ROAD_GLSL}`)
       .replace('#include <map_fragment>', 'diffuseColor.rgb = roadColor();');
   };
+  litByHeadlights(roadMat, 'road');
+  litByHeadlights(terrainGrass, 'grass');
   const onRoad = (k, lat) => surfaceY(track, k, lat) + 0.02;
   const road = new THREE.Mesh(strip(track, TRACK_W / 2, -TRACK_W / 2, onRoad), roadMat);
   road.userData.ground = 'road';

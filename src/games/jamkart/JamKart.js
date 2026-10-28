@@ -313,7 +313,6 @@ export class JamKart {
           <div class="jk-sel-who" data-who></div>
           <div class="jk-sel-model"><span>◀</span><b data-mname></b><span>▶</span></div>
           <div class="jk-sel-blurb" data-blurb></div>
-          <div class="jk-sel-stats" data-stats></div>
           <div class="jk-sel-perk" data-perk></div>
           <div class="jk-sel-colors" data-colors></div>
           <div class="jk-sel-ready" data-ready></div>
@@ -337,7 +336,7 @@ export class JamKart {
         const q = (k) => h.querySelector(`[data-${k}]`);
         return {
           root: h, tag: q('tag'), place: q('place'), lap: q('lap'), item: q('item'), slot: q('slot'), slot2: q('slot2'), key: q('key'), card: q('card'), big: q('big'), static: q('static'), drift: q('drift'), cardT: 0, bigT: 0,
-          who: q('who'), mname: q('mname'), blurb: q('blurb'), stats: q('stats'), perk: q('perk'), colors: q('colors'), ready: q('ready'),
+          who: q('who'), mname: q('mname'), blurb: q('blurb'), perk: q('perk'), colors: q('colors'), ready: q('ready'),
         };
       }),
     };
@@ -579,9 +578,6 @@ export class JamKart {
     h.who.style.color = hex(k.color);
     h.mname.textContent = m.name;
     h.blurb.textContent = m.blurb;
-    h.stats.innerHTML = Object.entries(m.stats)
-      .map(([name, n]) => `<div><span>${name}</span><i>${'<b></b>'.repeat(n)}${'<b class="off"></b>'.repeat(5 - n)}</i></div>`)
-      .join('');
     h.perk.innerHTML = `<b>PERK</b> ${m.perk}`;
     h.colors.innerHTML = PALETTE.map((c, n) => `<i class="${n === k.colorIdx ? 'on' : ''}" style="background:${hex(c)}"></i>`).join('');
     const keys = this.players === 1 ? ['◀ ▶', '▲ ▼', 'SPACE'] : [['A D', 'W S', 'SPACE'], ['◀ ▶', '▲ ▼', 'ENTER']][k.i];

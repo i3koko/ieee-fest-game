@@ -223,7 +223,6 @@ body {
   min-width: 15em;
   padding: 0.9em 1.2em;
   background: rgba(0, 0, 0, 0.6);
-  border-left: 3px solid var(--accent);
   border-radius: 6px;
   font-size: clamp(12px, 1vw, 18px);
 }
@@ -388,7 +387,6 @@ body {
 .fact {
   margin-top: 1.2em;
   padding: 0.8em 1.1em;
-  border-left: 4px solid var(--accent);
   border-radius: 4px;
   background: rgba(var(--accent-rgb), 0.08);
 }
@@ -1048,7 +1046,6 @@ body {
   padding: 0.7em 1em;
   transform: translateX(-50%);
   background: rgba(0, 0, 0, 0.72);
-  border-left: 4px solid var(--accent);
   border-radius: 6px;
   opacity: 0;
   transition: opacity 0.4s;
@@ -1179,38 +1176,8 @@ body {
   font-size: 0.95em;
   opacity: 0.9;
 }
-.jk-sel-stats {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 0.3em 1.4em;
-  margin: 0.7em 0 0.5em;
-  text-align: left;
-}
-.jk-sel-stats div {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 0.6em;
-  font-size: 0.78em;
-  font-weight: 800;
-  letter-spacing: 0.12em;
-}
-.jk-sel-stats i {
-  display: flex;
-  gap: 3px;
-}
-.jk-sel-stats b {
-  width: 1.4em;
-  height: 0.6em;
-  border-radius: 2px;
-  background: var(--accent);
-  box-shadow: 0 0 6px rgba(var(--accent-rgb), 0.6);
-}
-.jk-sel-stats b.off {
-  background: rgba(255, 255, 255, 0.14);
-  box-shadow: none;
-}
 .jk-sel-perk {
+  margin: 0.7em 0 0.5em;
   font-size: 0.9em;
 }
 .jk-sel-perk b {

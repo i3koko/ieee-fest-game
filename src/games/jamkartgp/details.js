@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { buildScenery } from './scenery.js';
+import { litByHeadlights } from './headlights.js';
 import { TRACK_W, SAMPLES, HAZARDS, sampleAt, surfaceY, vergeY, locate, canvasTexture, rng, strip, bandStrip, vergeLats } from './track.js';
 
 // Everything around the GP circuit that makes it a racetrack: sky, kerbs,
@@ -165,23 +166,25 @@ export function buildDetails(scene, track, terrainY, reserved) {
 
 // Red/white kerbs on both edges through every corner.
 function buildKerbs(scene, track) {
-  const mat = new THREE.ShaderMaterial({
-    side: THREE.DoubleSide,
-    vertexShader: /* glsl */ `
-      varying vec2 vUv;
-      void main() { vUv = uv; gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }`,
-    fragmentShader: /* glsl */ `
-      varying vec2 vUv;
-      void main() {
-        float s = step(0.5, fract(vUv.y / 2.0));
-        gl_FragColor = vec4(mix(vec3(0.95), vec3(0.85, 0.06, 0.05), s), 1.0);
-      }`,
-  });
+  // Lit like the road (so they darken at night and catch the headlights),
+  // with the stripes painted in the shader every 2 m.
+  const mat = new THREE.MeshStandardMaterial({ roughness: 0.6, side: THREE.DoubleSide });
+  mat.onBeforeCompile = (shader) => {
+    shader.vertexShader = shader.vertexShader
+      .replace('#include <common>', '#include <common>\nvarying vec2 vKerbUv;')
+      .replace('#include <uv_vertex>', '#include <uv_vertex>\nvKerbUv = uv;');
+    shader.fragmentShader = shader.fragmentShader
+      .replace('#include <common>', '#include <common>\nvarying vec2 vKerbUv;')
+      .replace('#include <map_fragment>', 'diffuseColor.rgb = mix(vec3(0.62), vec3(0.55, 0.035, 0.03), step(0.5, fract(vKerbUv.y / 2.0)));');
+  };
+  litByHeadlights(mat, 'kerb');
   forCorners(track, 0.012, (i0, i1) => {
     for (const s of [1, -1]) {
       const a = s * (TRACK_W / 2);
       const b = s * (TRACK_W / 2 - 1.2);
-      scene.add(new THREE.Mesh(strip(track, a, b, (k, lat) => surfaceY(track, k, lat) + 0.05, { i0, i1 }), mat));
+      const kerb = new THREE.Mesh(strip(track, a, b, (k, lat) => surfaceY(track, k, lat) + 0.05, { i0, i1 }), mat);
+      kerb.receiveShadow = true;
+      scene.add(kerb);
     }
   });
 }
@@ -212,6 +215,7 @@ function buildGravel(scene, track) {
   tex.wrapS = tex.wrapT = THREE.RepeatWrapping;
   tex.repeat.set(3, 0.25);
   const mat = new THREE.MeshStandardMaterial({ map: tex, roughness: 1 });
+  litByHeadlights(mat, 'gravel');
   forCorners(track, 0.03, (i0, i1) => {
     const mid = (i0 + i1) >> 1;
     const out = track.curv[mid] > 0 ? -1 : 1; // the outside of the bend

@@ -5,6 +5,7 @@ import { music } from '../../core/music.js';
 import { TRACK_W, SAMPLES, FOG, buildTrack, buildBoard, locate, ahead, groundAt, surfaceY, gateHeight } from './track.js';
 import { makeKart, MODELS, PALETTE, limitSuspension } from './kart.js';
 import { buildWeather } from './weather.js';
+import { updateHeadlights } from './headlights.js';
 import { buildAtmosphere } from './atmosphere.js';
 import { createQuality } from './quality.js';
 
@@ -140,6 +141,7 @@ export class JamKartGP {
     this.#buildSpray();
     // Tyre smoke, skid marks, marshals, the TV helicopter and confetti.
     this.atmo = buildAtmosphere(this.scene, this.track, this.board.terrainY);
+    this.atmo.onFirework = (dist) => kartSfx.firework(dist);
     // Graphics tier: picked automatically from the frame rate (see quality.js).
     this.quality = createQuality((q) => this.#applyQuality(q));
     this.#applyQuality(this.quality.settings);
@@ -253,12 +255,13 @@ export class JamKartGP {
   #rebuild(k) {
     if (k.parts) {
       this.scene.remove(k.parts.group);
-      k.parts.group.traverse((o) => o.isMesh && [].concat(o.material).forEach((m) => m.dispose()));
+      k.parts.group.traverse((o) => (o.isMesh || o.isSprite) && [].concat(o.material).forEach((m) => m.dispose()));
     }
     k.spec = MODELS[k.model];
     k.color = PALETTE[k.colorIdx];
     k.parts = makeKart(k.spec.id, k.color);
     k.parts.group.rotation.order = 'YXZ'; // yaw, then the road's slope and bank
+    k.parts.setLights(this.lamps ?? 0);
     this.scene.add(k.parts.group);
     this.#animateKart(k, 0);
   }
@@ -354,7 +357,6 @@ export class JamKartGP {
           <div class="jk-sel-who" data-who></div>
           <div class="jk-sel-model"><span>◀</span><b data-mname></b><span>▶</span></div>
           <div class="jk-sel-blurb" data-blurb></div>
-          <div class="jk-sel-stats" data-stats></div>
           <div class="jk-sel-perk" data-perk></div>
           <div class="jk-sel-colors" data-colors></div>
           <div class="jk-sel-ready" data-ready></div>
@@ -378,7 +380,7 @@ export class JamKartGP {
         const q = (k) => h.querySelector(`[data-${k}]`);
         return {
           root: h, tag: q('tag'), place: q('place'), lap: q('lap'), speed: q('speed'), item: q('item'), slot: q('slot'), slot2: q('slot2'), key: q('key'), card: q('card'), big: q('big'), static: q('static'), cardT: 0, bigT: 0,
-          who: q('who'), mname: q('mname'), blurb: q('blurb'), stats: q('stats'), perk: q('perk'), colors: q('colors'), ready: q('ready'),
+          who: q('who'), mname: q('mname'), blurb: q('blurb'), perk: q('perk'), colors: q('colors'), ready: q('ready'),
         };
       }),
     };
@@ -519,8 +521,9 @@ export class JamKartGP {
   }
 
   // Weather follows the race: sunny with drifting clouds for most of lap 1,
-  // the sky darkens late in the lap, and it rains on lap 2. The title screen
-  // drifts between sunshine and showers.
+  // the sky darkens late in the lap, and it rains on lap 2. Then the rain
+  // clears for a sunset, and the last ~15 s are run at night with headlights.
+  // The title screen drifts between sunshine and showers.
   #updateWeather(dt, live) {
     const smooth = (a, b, v) => {
       const t = clamp((v - a) / (b - a), 0, 1);
@@ -529,10 +532,19 @@ export class JamKartGP {
     const leader = Math.max(...this.karts.map((k) => k.prog)) / this.track.length;
     const x = this.forceWeather ?? (this.demo ? 0.6 + 0.65 * Math.sin(this.time / 30) : live || this.endTimer !== null ? leader : 0);
     // Clouds build over most of the first lap; the rain sets in gradually
-    // through the start of the second.
-    this.weather.set(0.12 + 0.88 * smooth(0.3, 1.0, x), smooth(0.85, 1.4, x), dt);
+    // through the start of the second and clears again before the sunset.
+    const clearing = smooth(1.45, 1.72, x);
+    this.weather.set((0.12 + 0.88 * smooth(0.3, 1.0, x)) * (1 - 0.85 * clearing), smooth(0.85, 1.4, x) * (1 - clearing), dt);
+    this.weather.setNight(smooth(1.6, 1.95, x));
     this.wet = this.weather.wet;
     this.board.setWet(this.wet);
+    // Lights on at dusk.
+    const lamps = smooth(0.3, 0.75, this.weather.night);
+    updateHeadlights(this.karts, lamps * 1.6);
+    if (lamps !== this.lamps) {
+      this.lamps = lamps;
+      for (const k of this.karts) k.parts?.setLights(lamps);
+    }
 
     const humans = this.karts.filter((k) => k.human);
     const focuses = this.demo ? [this.demoCam.position] : humans.map((k) => k.cam.position);
@@ -741,9 +753,6 @@ export class JamKartGP {
     h.who.style.color = hex(k.color);
     h.mname.textContent = m.name;
     h.blurb.textContent = m.blurb;
-    h.stats.innerHTML = Object.entries(m.stats)
-      .map(([name, n]) => `<div><span>${name}</span><i>${'<b></b>'.repeat(n)}${'<b class="off"></b>'.repeat(5 - n)}</i></div>`)
-      .join('');
     h.perk.innerHTML = `<b>PERK</b> ${m.perk}`;
     h.colors.innerHTML = PALETTE.map((c, n) => `<i class="${n === k.colorIdx ? 'on' : ''}" style="background:${hex(c)}"></i>`).join('');
     const keys = this.players === 1 ? ['◀ ▶', '▲ ▼', 'SPACE'] : [['A D', 'W S', 'SPACE'], ['◀ ▶', '▲ ▼', 'ENTER']][k.i];
@@ -801,7 +810,8 @@ export class JamKartGP {
     for (const l of this.board.lights) l.mat.color.copy(l.base).multiplyScalar(0.6 + 0.4 * Math.sin(this.time * 3 + l.phase));
     this.#updateWeather(dt, live);
     this.#updateSpray(dt);
-    this.atmo.update(dt, this.time, this.karts, { wet: this.wet, live, raceTime: this.raceTime, finishing: this.firstFinish !== null });
+    const watch = this.karts.filter((k) => k.human);
+    this.atmo.update(dt, this.time, this.karts, { wet: this.wet, live, raceTime: this.raceTime, finishing: this.firstFinish !== null, watch });
 
     if (this.demo) this.#placeDemoCam(dt);
     else {
@@ -817,7 +827,8 @@ export class JamKartGP {
       humans.every((k) => k.finished) ||
       (this.firstFinish !== null && this.raceTime > this.firstFinish + FINISH_GRACE) ||
       this.raceTime > RACE_CAP;
-    if (done && this.endTimer === null) this.endTimer = 2.5;
+    // A few seconds to enjoy the fireworks before the results.
+    if (done && this.endTimer === null) this.endTimer = 6;
     if (this.endTimer !== null && (this.endTimer -= dt) <= 0) return this.#result();
     return null;
   }
@@ -1072,6 +1083,8 @@ export class JamKartGP {
       if (this.firstFinish === null) this.firstFinish = this.raceTime;
       k.finalPlace = this.karts.filter((o) => o.finished).length - 1;
       if (k.human || k.finalPlace === 0) this.atmo.confetti(k.human ? 1 : 0.5);
+      // Fireworks as soon as the race is won; a bigger show for a player.
+      if (k.finalPlace === 0) this.atmo.fireworks(k.human ? 1 : 0.4);
       if (k.human) {
         this.#big(k, `FINISH! ${ORDINAL[k.finalPlace]}`, k.finalPlace === 0 ? 'win' : k.finalPlace < 3 ? 'go' : '', 99);
         kartSfx.finish(k.finalPlace);

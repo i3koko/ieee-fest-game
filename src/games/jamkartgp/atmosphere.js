@@ -3,8 +3,8 @@ import { TRACK_W, SAMPLES, surfaceY, groundAt, canvasTexture } from './track.js'
 
 // Race-day atmosphere for Jam Kart GP: tyre smoke and skid marks when karts
 // lock up, spin or slide, marshals who wave yellow flags at a spin and the
-// chequered flag at the finish, a TV helicopter following the leader, and
-// confetti over the line when karts finish.
+// chequered flag at the finish, a TV helicopter following the leader,
+// confetti over the line when karts finish, and fireworks once the race is won.
 
 const REAR = 1.15; // rear axle behind the kart's centre
 const TRACKW = 0.85; // half the rear track
@@ -15,9 +15,10 @@ export function buildAtmosphere(scene, track, terrainY) {
   const marshals = buildMarshals(scene, track, terrainY);
   const heli = buildHelicopter(scene);
   const confetti = buildConfetti(scene, track);
+  const fireworks = buildFireworks(scene, track);
 
   return {
-    // ctx: { wet, live, raceTime, finishing }
+    // ctx: { wet, live, raceTime, finishing, watch (karts the cameras follow) }
     update(dt, time, karts, ctx) {
       for (const k of karts) {
         if (!k.skid || Math.abs(k.lat) > TRACK_W / 2 + 0.3) {
@@ -44,11 +45,19 @@ export function buildAtmosphere(scene, track, terrainY) {
       marshals.update(dt, time, karts, ctx);
       heli.update(dt, time, karts, track);
       confetti.update(dt, time);
+      fireworks.update(dt, ctx.watch);
     },
     confetti: (amount) => confetti.burst(amount),
+    // Starts (or steps up) the fireworks show: 1 for a player's win.
+    fireworks: (amount) => fireworks.start(amount),
+    // Called with (distance) each time a shell bursts, for the sound.
+    set onFirework(fn) {
+      fireworks.onBurst = fn;
+    },
     reset() {
       skids.clear();
       confetti.clear();
+      fireworks.clear();
     },
   };
 }
@@ -452,4 +461,176 @@ function buildConfetti(scene, track) {
       for (const b of bits) b.life = 0;
     },
   };
+}
+
+// ------------------------------------------------------------------ fireworks
+
+// Rockets launched from beside the circuit ahead of the cameras, bursting
+// into peonies, rings and golden crackle. Additive points brighter than 1, so
+// the bloom makes them glow.
+function buildFireworks(scene, track) {
+  const n = 5000;
+  const geo = new THREE.BufferGeometry();
+  const pos = new Float32Array(n * 3).fill(-500);
+  const col = new Float32Array(n * 3);
+  geo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+  geo.setAttribute('color', new THREE.BufferAttribute(col, 3));
+  const dot = canvasTexture(64, 64, (g, w) => {
+    const grad = g.createRadialGradient(w / 2, w / 2, 0, w / 2, w / 2, w / 2);
+    grad.addColorStop(0, 'rgba(255,255,255,1)');
+    grad.addColorStop(0.35, 'rgba(255,255,255,0.6)');
+    grad.addColorStop(1, 'rgba(255,255,255,0)');
+    g.fillStyle = grad;
+    g.fillRect(0, 0, w, w);
+  });
+  const mat = new THREE.PointsMaterial({ size: 1.6, map: dot, vertexColors: true, transparent: true, blending: THREE.AdditiveBlending, depthWrite: false, fog: false });
+  const pts = new THREE.Points(geo, mat);
+  pts.frustumCulled = false;
+  pts.visible = false;
+  scene.add(pts);
+
+  const COLORS = [0xff3b5c, 0xffd23f, 0x2ec4ff, 0x7cff6b, 0xffffff, 0xc77dff, 0xff8a2b, 0x3df5ff].map((h) => new THREE.Color(h));
+  const GOLD = new THREE.Color(0xffc060);
+  const sparks = Array.from({ length: n }, () => ({ life: 0, max: 1, x: 0, y: 0, z: 0, vx: 0, vy: 0, vz: 0, drag: 1, g: 4, c: COLORS[0], c2: null, twinkle: false, size: 1 }));
+  let next = 0;
+  const spark = () => sparks[next++ % n];
+  const rockets = [];
+  let rate = 0; // rockets per second
+  let wait = 0;
+  let salvo = 0; // rockets still to fire straight away
+  const show = { onBurst: null };
+
+  // Somewhere off to the side of the track, 70-130 m ahead of a camera.
+  const site = (watch) => {
+    const k = watch[Math.floor(Math.random() * watch.length)];
+    if (!k) return null;
+    const step = track.length / SAMPLES;
+    const i = (k.idx + Math.floor((70 + Math.random() * 60) / step)) % SAMPLES;
+    const side = Math.random() < 0.5 ? -1 : 1;
+    const lat = side * (TRACK_W / 2 + 14 + Math.random() * 30);
+    const p = track.pts[i];
+    const x = p.x + track.side[i].x * lat;
+    const z = p.y + track.side[i].y * lat;
+    return { x, z, y: track.terrainY ? track.terrainY(x, z) : surfaceY(track, i, 0), from: k };
+  };
+
+  const launch = (watch) => {
+    const s = site(watch);
+    if (!s) return;
+    rockets.push({
+      x: s.x, y: s.y, z: s.z,
+      vx: (Math.random() - 0.5) * 3, vy: 27 + Math.random() * 7, vz: (Math.random() - 0.5) * 3,
+      fuse: 1.3 + Math.random() * 0.5, from: s.from,
+      kind: ['peony', 'peony', 'ring', 'crackle', 'two'][Math.floor(Math.random() * 5)],
+      c: COLORS[Math.floor(Math.random() * COLORS.length)],
+      c2: COLORS[Math.floor(Math.random() * COLORS.length)],
+    });
+  };
+
+  const burst = (r) => {
+    const count = r.kind === 'crackle' ? 160 : 200;
+    const speed = 11 + Math.random() * 5;
+    // A random tilt for rings, so they don't all face the same way.
+    const axis = new THREE.Vector3(Math.random() - 0.5, 1, Math.random() - 0.5).normalize();
+    const u = new THREE.Vector3(1, 0, 0).cross(axis).normalize();
+    const w = axis.clone().cross(u);
+    for (let i = 0; i < count; i++) {
+      const p = spark();
+      let dx, dy, dz;
+      if (r.kind === 'ring') {
+        const a = (i / count) * Math.PI * 2;
+        dx = u.x * Math.cos(a) + w.x * Math.sin(a);
+        dy = u.y * Math.cos(a) + w.y * Math.sin(a);
+        dz = u.z * Math.cos(a) + w.z * Math.sin(a);
+      } else {
+        // Even spread over a sphere.
+        dy = 1 - (2 * (i + 0.5)) / count;
+        const rr = Math.sqrt(1 - dy * dy);
+        const a = i * 2.39996;
+        dx = Math.cos(a) * rr;
+        dz = Math.sin(a) * rr;
+      }
+      const v = speed * (r.kind === 'ring' ? 1 : 0.85 + Math.random() * 0.3);
+      Object.assign(p, {
+        x: r.x, y: r.y, z: r.z, vx: dx * v + r.vx, vy: dy * v + r.vy * 0.3, vz: dz * v + r.vz,
+        life: 0, max: (r.kind === 'crackle' ? 2.2 : 1.7) + Math.random() * 0.5, drag: 1.3, g: 4.5,
+        c: r.kind === 'crackle' ? GOLD : r.c, c2: r.kind === 'two' && i % 2 ? r.c2 : null,
+        twinkle: r.kind === 'crackle', size: 1,
+      });
+    }
+    // A bright flash at the centre.
+    const f = spark();
+    Object.assign(f, { x: r.x, y: r.y, z: r.z, vx: 0, vy: 0, vz: 0, life: 0, max: 0.25, drag: 0, g: 0, c: COLORS[4], c2: null, twinkle: false, size: 6 });
+    if (show.onBurst && r.from) show.onBurst(Math.hypot(r.x - r.from.x, r.y - r.from.y, r.z - r.from.z));
+  };
+
+  show.start = (amount = 1) => {
+    rate = Math.max(rate, 1.2 + 1.6 * amount);
+    salvo = Math.max(salvo, Math.round(2 + 3 * amount));
+    pts.visible = true;
+  };
+
+  show.update = (dt, watch = []) => {
+    if (!pts.visible) return;
+    if (rate > 0 && watch.length) {
+      // An opening salvo, then a steady stream.
+      for (; salvo > 0; salvo--) launch(watch);
+      for (wait -= dt; wait <= 0; wait += (0.5 + Math.random()) / rate) launch(watch);
+    }
+    for (let i = rockets.length - 1; i >= 0; i--) {
+      const r = rockets[i];
+      r.vy -= 9.8 * dt;
+      r.x += r.vx * dt;
+      r.y += r.vy * dt;
+      r.z += r.vz * dt;
+      // A short trail of embers behind the rocket.
+      const t = spark();
+      Object.assign(t, { x: r.x, y: r.y, z: r.z, vx: (Math.random() - 0.5), vy: -2, vz: (Math.random() - 0.5), life: 0, max: 0.5, drag: 2, g: 2, c: GOLD, c2: null, twinkle: false, size: 0.6 });
+      if ((r.fuse -= dt) <= 0) {
+        burst(r);
+        rockets.splice(i, 1);
+      }
+    }
+    for (let i = 0; i < n; i++) {
+      const p = sparks[i];
+      const o = i * 3;
+      if (p.life >= p.max) {
+        if (pos[o + 1] !== -500) pos.fill(-500, o, o + 3);
+        continue;
+      }
+      p.life += dt;
+      const drag = Math.max(0, 1 - p.drag * dt);
+      p.vx *= drag;
+      p.vy = p.vy * drag - p.g * dt;
+      p.vz *= drag;
+      p.x += p.vx * dt;
+      p.y += p.vy * dt;
+      p.z += p.vz * dt;
+      pos[o] = p.x;
+      pos[o + 1] = p.y;
+      pos[o + 2] = p.z;
+      // Bright at first, fading out; crackle flickers at the end.
+      const age = p.life / p.max;
+      let b = (1 - age) * (1 - age) * 2.6 * p.size;
+      if (p.twinkle && age > 0.5) b *= Math.random() < 0.5 ? 0.1 : 1.6;
+      const c = p.c2 ?? p.c;
+      col[o] = c.r * b;
+      col[o + 1] = c.g * b;
+      col[o + 2] = c.b * b;
+    }
+    geo.attributes.position.needsUpdate = true;
+    geo.attributes.color.needsUpdate = true;
+  };
+
+  show.clear = () => {
+    rate = 0;
+    salvo = 0;
+    wait = 0;
+    rockets.length = 0;
+    for (const p of sparks) p.life = p.max;
+    pos.fill(-500);
+    pts.visible = false;
+  };
+
+  return show;
 }

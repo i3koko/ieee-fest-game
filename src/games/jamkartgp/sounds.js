@@ -273,6 +273,15 @@ export const kartSfx = {
     burst(0.12, { vol: 0.12, type: 'highpass', freq: 1500, to: 800 });
     burst(2.8, { vol: 0.32, type: 'lowpass', freq: 260, to: 60, when: 0.08 });
   },
+  // A firework shell bursting `dist` metres away: the boom arrives late and
+  // softer the further off it is, with a crackle after.
+  firework(dist = 100) {
+    if (!ensure()) return;
+    const when = Math.min(dist / 343, 0.6);
+    const vol = Math.min(1, 60 / Math.max(dist, 30));
+    burst(0.9, { vol: 0.16 * vol, type: 'lowpass', freq: 500, to: 70, when });
+    burst(0.6, { vol: 0.035 * vol, type: 'highpass', freq: 3500, to: 2000, when: when + 0.15 });
+  },
   // Item roulette: quick rising blips.
   pickup() {
     if (!ensure()) return;

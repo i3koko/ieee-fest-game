@@ -46,6 +46,8 @@ export const PALETTE = [0x3df5ff, 0xff9a1f, 0xff3fd2, 0x9dff3a, 0xffe03d, 0xff3b
 
 const templates = {};
 const clearances = {}; // per model: how far the body may drop over a wheel
+const lampSpots = {}; // per model: where the head and tail lights sit
+const lampGeo = new THREE.CircleGeometry(0.12, 14);
 
 // Measures the smallest gap between each tyre and the body around it: rays
 // straight up from the tyre (for broad surfaces above it) and the distance
@@ -89,6 +91,33 @@ function measureClearance(modelId, body, wheels, group) {
   }
   clearances[modelId] = { gap, spots };
   return clearances[modelId];
+}
+
+// Finds a spot on the nose (dir 1) or tail (dir -1) for a pair of lamps:
+// rays fired at the body from in front of (or behind) it, as wide apart as
+// the bodywork allows. Cached per model.
+function findLamps(modelId, body, group) {
+  if (lampSpots[modelId]) return lampSpots[modelId];
+  group.updateMatrixWorld(true);
+  const meshes = [];
+  body.traverse((o) => o.isMesh && meshes.push(o));
+  const box = new THREE.Box3().setFromObject(body);
+  const ray = new THREE.Raycaster();
+  const find = (dir) => {
+    const end = dir > 0 ? box.max.z : box.min.z;
+    for (const fy of [0.3, 0.45, 0.2]) {
+      const y = box.min.y + (box.max.y - box.min.y) * fy;
+      for (const x of [0.6, 0.5, 0.4, 0.3, 0.2]) {
+        ray.set(new THREE.Vector3(x, y, end + dir), new THREE.Vector3(0, 0, -dir));
+        const hit = ray.intersectObjects(meshes, false)[0];
+        // Only the nose/tail itself, not a sidepod further back.
+        if (hit && Math.abs(hit.point.z - end) < 0.8) return { x, y, z: hit.point.z + dir * 0.02 };
+      }
+    }
+    return { x: 0.3, y: box.min.y + 0.3, z: end + dir * 0.02 };
+  };
+  lampSpots[modelId] = { front: find(1), rear: find(-1) };
+  return lampSpots[modelId];
 }
 
 // Keeps the suspension inside the wheel arches: works out how far the body
@@ -248,8 +277,43 @@ export function makeKart(modelId, color) {
   shield.visible = false;
   group.add(shield);
 
+  // Head and tail lights: dull lenses by day, glowing (and blooming) at
+  // night, with a soft flare round each headlight.
+  const spots = findLamps(modelId, body, group);
+  const headMat = new THREE.MeshBasicMaterial({ color: 0x9a9890 });
+  const tailMat = new THREE.MeshBasicMaterial({ color: 0x4a0806 });
+  const flareMat = new THREE.SpriteMaterial({ map: glowTexture(), color: 0xfff0d8, transparent: true, opacity: 0, blending: THREE.AdditiveBlending, depthWrite: false });
+  const flares = [];
+  // The spots are in the kart's space; the lamps ride on the body.
+  group.updateMatrixWorld(true);
+  const at = (o, x, y, z) => o.position.copy(body.worldToLocal(new THREE.Vector3(x, y, z)));
+  for (const sx of [-1, 1]) {
+    const head = new THREE.Mesh(lampGeo, headMat);
+    at(head, sx * spots.front.x, spots.front.y, spots.front.z);
+    const tail = new THREE.Mesh(lampGeo, tailMat);
+    at(tail, sx * spots.rear.x, spots.rear.y, spots.rear.z);
+    tail.rotation.y = Math.PI;
+    const flare = new THREE.Sprite(flareMat);
+    at(flare, sx * spots.front.x, spots.front.y, spots.front.z + 0.15);
+    flare.scale.setScalar(1.3);
+    flare.visible = false;
+    flares.push(flare);
+    body.add(head, tail, flare);
+  }
+  const HEAD_OFF = headMat.color.clone();
+  const TAIL_OFF = tailMat.color.clone();
+  const HEAD_ON = new THREE.Color(3.2, 3, 2.6);
+  const TAIL_ON = new THREE.Color(2.6, 0.08, 0.05);
+
   const parts = {
     group, body, wheels, steer, under, flame, shield, clearance,
+    // 0 = lights off (daylight) .. 1 = full beam.
+    setLights(n) {
+      headMat.color.copy(HEAD_OFF).lerp(HEAD_ON, n);
+      tailMat.color.copy(TAIL_OFF).lerp(TAIL_ON, n);
+      flareMat.opacity = n * 0.75;
+      for (const f of flares) f.visible = n > 0.01;
+    },
     setColor(hex) {
       for (const m of paint) m.color.setHex(hex);
       for (const m of glow) {
