@@ -34,7 +34,9 @@ const GLSL = /* glsl */ `
       float level = 1.0 - smoothstep(1.5, 4.0, abs(d.y));
       sum += lp.w * (beam / (1.0 + max(along, 0.0) * 0.05) + spill) * level;
     }
-    return sum;
+    // Overlapping beams add up, but softly, so a pack of karts doesn't
+    // burn the road white.
+    return sum / (1.0 + 0.6 * sum);
   }
 `;
 

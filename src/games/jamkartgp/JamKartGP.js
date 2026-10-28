@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import { sfx } from '../../core/audio.js';
-import { createEngine, kartSfx, setRain } from './sounds.js';
+import { createEngine, kartSfx, setRain, setCrowd } from './sounds.js';
 import { music } from '../../core/music.js';
 import { TRACK_W, SAMPLES, FOG, buildTrack, buildBoard, locate, ahead, groundAt, surfaceY, gateHeight } from './track.js';
 import { makeKart, MODELS, PALETTE, limitSuspension } from './kart.js';
@@ -8,6 +8,8 @@ import { buildWeather } from './weather.js';
 import { updateHeadlights } from './headlights.js';
 import { buildAtmosphere } from './atmosphere.js';
 import { createQuality } from './quality.js';
+import { createDirector } from './cinecam.js';
+import { getRecord, setRecord, nameRecord } from './records.js';
 
 const RACERS = 8;
 const GRAVITY = 30;
@@ -58,8 +60,6 @@ const ITEMS = {
   },
 };
 
-// Rendering quality. Stage 4 makes this automatic; 'high' for now.
-
 // The mid-race weather change explains itself too.
 const RAIN_INFO = {
   name: 'RAIN FADE',
@@ -88,12 +88,44 @@ const clamp = THREE.MathUtils.clamp;
 const wrapAngle = (a) => Math.atan2(Math.sin(a), Math.cos(a));
 const hex = (c) => `#${c.toString(16).padStart(6, '0')}`;
 const fmtTime = (t) => `${Math.floor(t / 60)}:${(t % 60).toFixed(1).padStart(4, '0')}`;
+const smooth = (a, b, v) => {
+  const t = clamp((v - a) / (b - a), 0, 1);
+  return t * t * (3 - 2 * t);
+};
+
+// Race conditions: how the sky plays out over a race. `sky(x)` takes the
+// leader's progress in laps (0 at the start, 2 at the flag) and gives the
+// cloud, rain and night levels. RANDOM on the how-to screen rolls one per race.
+const CONDITIONS = {
+  CLASSIC: {
+    // Sun for most of lap 1, clouds, rain on lap 2, then it clears for a
+    // sunset and a night finish.
+    sky: (x) => {
+      const clearing = smooth(1.45, 1.72, x);
+      return { cloud: (0.12 + 0.88 * smooth(0.3, 1.0, x)) * (1 - 0.85 * clearing), wet: smooth(0.85, 1.4, x) * (1 - clearing), night: smooth(1.6, 1.95, x) };
+    },
+    card: { name: 'CHANGING WEATHER', color: '#ffd23f', line: 'Sunshine now, rain on lap 2, then a night finish under the lights.' },
+  },
+  'DRY SUNSET': {
+    sky: (x) => ({ cloud: 0.12 + 0.2 * smooth(0.2, 1.2, x), wet: 0, night: smooth(1.6, 1.95, x) }),
+    card: { name: 'DRY SUNSET', color: '#ff9a4a', line: 'A dry race into the evening: the sun sets on the final lap.' },
+  },
+  'WET RACE': {
+    sky: (x) => ({ cloud: 0.75 + 0.25 * smooth(0, 0.5, x), wet: 0.55 + 0.45 * smooth(0, 0.4, x), night: 0 }),
+    card: { name: 'WET RACE', color: '#7fc8ff', line: 'Rain all race. Heavy rain soaks up radio waves, so signals fade in a storm, and so does your grip.' },
+  },
+  'NIGHT RACE': {
+    sky: () => ({ cloud: 0.15, wet: 0, night: 1 }),
+    card: { name: 'NIGHT RACE', color: '#9fb6ff', line: 'Racing under the stars. Light is an electromagnetic wave like radio, just far shorter.' },
+  },
+};
+const RANDOM_CONDITIONS = { CLASSIC: 4, 'DRY SUNSET': 2, 'WET RACE': 2, 'NIGHT RACE': 2 };
 
 function pick(weights) {
   const total = Object.values(weights).reduce((a, b) => a + b, 0);
   let r = Math.random() * total;
   for (const [k, w] of Object.entries(weights)) if ((r -= w) <= 0) return k;
-  return 'compress';
+  return Object.keys(weights).at(-1);
 }
 
 function textSprite(text, color, w = 256, h = 256, font = '900 190px "Arial Black", Arial') {
@@ -142,6 +174,9 @@ export class JamKartGP {
     // Tyre smoke, skid marks, marshals, the TV helicopter and confetti.
     this.atmo = buildAtmosphere(this.scene, this.track, this.board.terrainY);
     this.atmo.onFirework = (dist) => kartSfx.firework(dist);
+    this.condition = 'CLASSIC';
+    // TV cameras for each player once they've finished.
+    this.director = createDirector(this.track);
     // Graphics tier: picked automatically from the frame rate (see quality.js).
     this.quality = createQuality((q) => this.#applyQuality(q));
     this.#applyQuality(this.quality.settings);
@@ -168,8 +203,13 @@ export class JamKartGP {
   }
 
   // The how-to screen's HAZARDS and GRAPHICS settings.
-  setOptions({ hazards = 'ALL ON', graphics = 'AUTO' } = {}) {
+  setOptions({ hazards = 'ALL ON', graphics = 'AUTO', conditions = 'RANDOM' } = {}) {
     this.quality.setMode(graphics);
+    this.condition = CONDITIONS[conditions] ? conditions : pick(RANDOM_CONDITIONS);
+    // Straight to the race's opening sky (the grid and kart select show it).
+    const sky = CONDITIONS[this.condition].sky(0);
+    this.weather.snap(sky.cloud, sky.wet);
+    this.weather.setNight(sky.night);
     const presets = {
       'ALL ON': { rain: true, boost: true, gates: true },
       'NO GATES': { rain: true, boost: true },
@@ -351,6 +391,8 @@ export class JamKartGP {
         <div class="jk-speed" data-speed>0<small>KM/H</small></div>
         <div class="jk-item" data-item><div class="slot" data-slot></div><div class="slot2" data-slot2></div><div class="key" data-key></div></div>
         <div class="jk-card" data-card><b></b><span></span></div>
+        <div class="jk-split" data-split></div>
+        <div class="jk-rivals" data-rivals><i></i><i></i></div>
         <div class="jk-big" data-big></div>
         <div class="static" data-static></div>
         <div class="jk-select" data-select>
@@ -380,6 +422,7 @@ export class JamKartGP {
         const q = (k) => h.querySelector(`[data-${k}]`);
         return {
           root: h, tag: q('tag'), place: q('place'), lap: q('lap'), speed: q('speed'), item: q('item'), slot: q('slot'), slot2: q('slot2'), key: q('key'), card: q('card'), big: q('big'), static: q('static'), cardT: 0, bigT: 0,
+          split: q('split'), splitT: 0, rivals: [...q('rivals').children],
           who: q('who'), mname: q('mname'), blurb: q('blurb'), perk: q('perk'), colors: q('colors'), ready: q('ready'),
         };
       }),
@@ -520,27 +563,19 @@ export class JamKartGP {
     return LAT_G * (k.spec.grip / 15) * (zone?.type === 'rain' ? 0.6 : 1) * (offRoad ? 0.75 : 1) * (1 - 0.18 * this.wet);
   }
 
-  // Weather follows the race: sunny with drifting clouds for most of lap 1,
-  // the sky darkens late in the lap, and it rains on lap 2. Then the rain
-  // clears for a sunset, and the last ~15 s are run at night with headlights.
-  // The title screen drifts between sunshine and showers.
+  // Weather follows the race's conditions (see CONDITIONS), driven by the
+  // leader's progress. The title screen drifts between sunshine and showers.
   #updateWeather(dt, live) {
-    const smooth = (a, b, v) => {
-      const t = clamp((v - a) / (b - a), 0, 1);
-      return t * t * (3 - 2 * t);
-    };
     const leader = Math.max(...this.karts.map((k) => k.prog)) / this.track.length;
     const x = this.forceWeather ?? (this.demo ? 0.6 + 0.65 * Math.sin(this.time / 30) : live || this.endTimer !== null ? leader : 0);
-    // Clouds build over most of the first lap; the rain sets in gradually
-    // through the start of the second and clears again before the sunset.
-    const clearing = smooth(1.45, 1.72, x);
-    this.weather.set((0.12 + 0.88 * smooth(0.3, 1.0, x)) * (1 - 0.85 * clearing), smooth(0.85, 1.4, x) * (1 - clearing), dt);
-    this.weather.setNight(smooth(1.6, 1.95, x));
+    const sky = (this.demo ? CONDITIONS.CLASSIC : CONDITIONS[this.condition]).sky(x);
+    this.weather.set(sky.cloud, sky.wet, dt);
+    this.weather.setNight(sky.night);
     this.wet = this.weather.wet;
     this.board.setWet(this.wet);
     // Lights on at dusk.
     const lamps = smooth(0.3, 0.75, this.weather.night);
-    updateHeadlights(this.karts, lamps * 1.6);
+    updateHeadlights(this.karts, lamps * 2.2);
     if (lamps !== this.lamps) {
       this.lamps = lamps;
       for (const k of this.karts) k.parts?.setLights(lamps);
@@ -554,7 +589,7 @@ export class JamKartGP {
     centre.divideScalar(watched.length);
     this.weather.update(dt, this.time, focuses, centre);
 
-    if (!this.demo && live && !this.rainWarned && x > 0.75) {
+    if (!this.demo && live && !this.rainWarned && this.condition === 'CLASSIC' && x > 0.75) {
       this.rainWarned = true;
       for (const k of humans) {
         this.#big(k, 'RAIN IS COMING!', 'warn', 2);
@@ -768,12 +803,18 @@ export class JamKartGP {
     this.input = input;
     this.time += dt;
     if (live && !this.endTimer) this.raceTime += dt;
+    // On the grid: what kind of race it is.
+    if (!this.demo && this.preT !== undefined && !this.introduced) {
+      this.introduced = true;
+      for (const k of this.karts) if (k.human) this.#card(k, CONDITIONS[this.condition].card);
+    }
 
     for (const k of this.karts) {
       let ctl = { steer: 0, brake: false, fire: false };
       if (live) ctl = k.human && !k.finished && !this.over ? this.#controls(k) : this.#cpu(k, dt, k.finished ? 0.6 : 1);
       if (k.human && !k.finished) k.maxV = k.spec.top;
       this.#drive(k, ctl, dt, live);
+      if (live && k.human && !this.over) this.#timing(k);
       if (live) this.#gates(k);
       if (ctl.fire && k.item && live && !this.over) this.#useItem(k);
     }
@@ -1072,11 +1113,15 @@ export class JamKartGP {
 
   #crossLine(k) {
     k.lap++;
+    const splits = k.splits ?? [];
+    k.splits = [];
     if (k.lap <= 0) return;
     const lapTime = this.raceTime - k.lapStart;
     k.lapStart = this.raceTime;
     k.bestLap = Math.min(k.bestLap, lapTime);
     if (this.demo) return;
+    if (k.human && splits.length === 2) this.#lapDone(k, [...splits, lapTime]);
+
     if (k.lap >= LAPS && !k.finished) {
       k.finished = true;
       k.jamT = 0;
@@ -1090,6 +1135,7 @@ export class JamKartGP {
         this.#big(k, `FINISH! ${ORDINAL[k.finalPlace]}`, k.finalPlace === 0 ? 'win' : k.finalPlace < 3 ? 'go' : '', 99);
         kartSfx.finish(k.finalPlace);
       }
+      if (k.finalPlace === 0) kartSfx.cheer(k.human ? 1 : 0.7);
     } else if (k.human) {
       const final = k.lap === LAPS - 1;
       this.#big(k, final ? 'FINAL LAP!' : `LAP ${k.lap + 1}`, final ? 'warn' : '', 1.4);
@@ -1143,6 +1189,10 @@ export class JamKartGP {
       if (k.human && !this.demo && k.place !== undefined && n < k.place && this.raceTime > 3) kartSfx.overtake();
       k.place = n;
     });
+    // The crowd cheers a player taking the lead.
+    const lead = order[0];
+    if (this.leader && lead !== this.leader && lead.human && this.raceTime > 5 && this.firstFinish === null) kartSfx.cheer(0.6);
+    this.leader = lead;
     this.order = order;
   }
 
@@ -1345,6 +1395,12 @@ export class JamKartGP {
   }
 
   #placeCamera(k, dt) {
+    // Over the line: the TV cameras take over.
+    if (k.finished && !this.demo) {
+      k.director ??= this.director();
+      k.director(k.cam, k, dt);
+      return;
+    }
     // Follow a blend of where the kart faces and where it's actually going.
     const speed = Math.hypot(k.vx, k.vz);
     const travel = speed > 5 ? Math.atan2(k.vx, k.vz) : k.h;
@@ -1371,6 +1427,61 @@ export class JamKartGP {
     const t = Math.min(dt * 2, 1);
     this.demoCam.position.lerp(target, dt > 0.5 ? 1 : t);
     this.demoCam.lookAt(k.x, k.y + 1, k.z);
+  }
+
+  // ---------------------------------------------------------------- timing
+
+  // Sector splits: the lap is cut in thirds, and each third is timed against
+  // today's lap record (see records.js), green if faster, red if slower.
+  #timing(k) {
+    if (k.finished || k.lap < 0) return;
+    const sector = Math.floor((this.track.dist[k.idx] / this.track.length) * 3);
+    if (k.sector !== undefined && sector === k.sector + 1 && sector <= 2) {
+      const t = this.raceTime - k.lapStart;
+      k.splits ??= [];
+      k.splits[sector - 1] = t;
+      const rec = getRecord();
+      this.#split(k, `S${sector}`, t, rec?.splits[sector - 1]);
+    }
+    k.sector = sector;
+  }
+
+  // A full lap with both splits: compare with the record, and set a new one.
+  #lapDone(k, splits) {
+    const rec = getRecord();
+    const lap = splits[2];
+    if (!rec || lap < rec.lap) {
+      setRecord(splits, k.spec.name);
+      this.recordBy = k;
+      this.#split(k, 'LAP RECORD', lap, null, 'record');
+      kartSfx.cheer(0.5);
+    } else this.#split(k, 'LAP', lap, rec.lap);
+  }
+
+  #split(k, label, t, ref, cls) {
+    const h = this.ui?.halves[k.i];
+    if (!h) return;
+    const delta = ref === undefined || ref === null ? '' : `<em>${t < ref ? '−' : '+'}${Math.abs(t - ref).toFixed(2)}</em>`;
+    h.split.innerHTML = `<b>${label}</b> ${fmtTime(t)} ${delta}`;
+    h.split.className = `jk-split show ${cls ?? (ref === undefined || ref === null ? '' : t < ref ? 'faster' : 'slower')}`;
+    h.splitT = 3;
+  }
+
+  // Arrows at the bottom of a player's view for karts close behind, on the
+  // side they're coming up, brighter the closer they are.
+  #rivals(k, h) {
+    const near = k.finished ? [] : this.karts.filter((o) => o !== k && !o.finished && k.prog - o.prog > 0 && k.prog - o.prog < 22 && Math.abs(o.y - k.y) < 3).sort((a, b) => b.prog - a.prog);
+    h.rivals.forEach((el, n) => {
+      const o = near[n];
+      if (!o) {
+        el.style.opacity = 0;
+        return;
+      }
+      const side = (o.x - k.x) * -Math.cos(k.h) + (o.z - k.z) * Math.sin(k.h);
+      el.style.left = `${50 + clamp(side / 5, -1, 1) * 30}%`;
+      el.style.opacity = (0.35 + 0.65 * (1 - (k.prog - o.prog) / 22)).toFixed(2);
+      el.style.color = hex(o.color);
+    });
   }
 
   #card(k, item) {
@@ -1416,6 +1527,10 @@ export class JamKartGP {
       h.static.classList.toggle('on', k.jamT > 0 || k.emiT > 0);
       h.static.classList.toggle('light', k.jamT <= 0 && k.emiT > 0);
       if (h.cardT > 0 && (h.cardT -= dt) <= 0) h.card.classList.remove('show');
+      if (h.splitT > 0 && (h.splitT -= dt) <= 0) h.split.classList.remove('show');
+      // Letterbox bars while the TV cameras have it.
+      h.root.classList.toggle('cine', k.finished);
+      this.#rivals(k, h);
       if (h.bigT > 0 && (h.bigT -= dt) <= 0) h.big.classList.remove('show');
       if (!k.finished && k.wrongT > 1 && h.bigT <= 0) this.#big(k, 'WRONG WAY ↺', 'bad', 0.3);
     });
@@ -1431,6 +1546,10 @@ export class JamKartGP {
 
   #updateAudio(live) {
     setRain(this.wet);
+    // The crowd gets louder near the grandstands, and once the race is won.
+    let near = Infinity;
+    for (const k of this.karts) if (k.human) for (const st of this.track.stands ?? []) near = Math.min(near, Math.hypot(st.x - k.x, st.z - k.z));
+    setCrowd(clamp(1.2 - near / 90, 0, 1) * (this.firstFinish !== null ? 1.4 : 1));
     const lead = Math.max(...this.karts.map((k) => k.lap));
     if (live && !this.endTimer) {
       music.set({ intensity: [0.55, 0.72, 0.92][clamp(lead, 0, LAPS - 1)], bpm: 110 + clamp(lead, 0, 2) * 5 });
@@ -1471,6 +1590,7 @@ export class JamKartGP {
     this.engines = [null, null];
     const humans = this.karts.filter((k) => k.human);
     const best = [...humans].sort((a, b) => this.#score(b) - this.#score(a))[0];
+    this.boardKart = best;
     const ord = (k) => ORDINAL[this.#finalPlace(k)];
     const line = (k) => `${k.spec.name} · ${ord(k)}${k.finished ? ` · ${fmtTime(k.finishTime)}` : ''} · ${k.hits} hit${k.hits === 1 ? '' : 's'}`;
     let title;
@@ -1513,8 +1633,9 @@ export class JamKartGP {
   // for one more lap of the players' karts, then stop.
   backdrop(dt) {
     if (!this.over) {
-      this.over = true;
       this.setPaused(true);
+      this.over = true;
+      setCrowd(0.5);
       if (this.ui) this.ui.root.style.display = 'none';
       for (const k of this.karts) k.fireworksTill = k.prog + this.track.length;
     }
@@ -1530,10 +1651,20 @@ export class JamKartGP {
     this.engines?.forEach((e) => e?.stop());
     this.engines = [null, null];
     setRain(0);
+    setCrowd(0);
+  }
+
+  // The arcade tells us who signed the board, so today's lap record (if
+  // this race set it) can carry their name.
+  signed({ name }) {
+    if (this.recordBy && this.recordBy === this.boardKart) nameRecord(name);
   }
 
   dispose() {
-    if (!this.demo) setRain(0);
+    if (!this.demo) {
+      setRain(0);
+      setCrowd(0);
+    }
     this.engines?.forEach((e) => e?.stop());
     if (this.hudRoot) this.hudRoot.innerHTML = '';
     this.scene.traverse((o) => {

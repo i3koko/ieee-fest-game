@@ -295,7 +295,7 @@ export function makeKart(modelId, color) {
     tail.rotation.y = Math.PI;
     const flare = new THREE.Sprite(flareMat);
     at(flare, sx * spots.front.x, spots.front.y, spots.front.z + 0.15);
-    flare.scale.setScalar(1.3);
+    flare.scale.setScalar(0.9);
     flare.visible = false;
     flares.push(flare);
     body.add(head, tail, flare);

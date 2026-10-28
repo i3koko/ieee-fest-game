@@ -266,7 +266,58 @@ export function setRain(amount) {
   rainGain.gain.setTargetAtTime(amount * amount * 0.04, now(), 0.8);
 }
 
+// The grandstand crowd: a murmur of voices (two bands of noise, gently
+// swelling) whose level the game sets from how close the player is to a
+// stand. Cheers go on top (kartSfx.cheer).
+let crowdGain;
+export function setCrowd(level) {
+  if (!ensure()) return;
+  if (!crowdGain) {
+    const src = noiseLoop();
+    const low = filt('bandpass', 700, 0.8);
+    const high = filt('bandpass', 2100, 1.6);
+    const highG = ac.createGain();
+    highG.gain.value = 0.35;
+    const swell = ac.createGain();
+    swell.gain.value = 0.75;
+    for (const [f, d] of [[0.23, 0.15], [0.71, 0.08]]) {
+      const lfo = osc('sine', f);
+      const depth = ac.createGain();
+      depth.gain.value = d;
+      lfo.connect(depth).connect(swell.gain);
+    }
+    crowdGain = ac.createGain();
+    crowdGain.gain.value = 0;
+    src.connect(low).connect(swell);
+    src.connect(high).connect(highG).connect(swell);
+    swell.connect(crowdGain).connect(out);
+  }
+  crowdGain.gain.setTargetAtTime(level * 0.05, now(), 0.6);
+}
+
 export const kartSfx = {
+  // The crowd roars (a finish, a lead change): a swell of voices and a
+  // couple of whistles.
+  cheer(amount = 1) {
+    if (!ensure()) return;
+    const t = now();
+    const s = ac.createBufferSource();
+    s.buffer = noiseBuf;
+    s.loop = true;
+    const f = filt('bandpass', 1100, 0.6);
+    const g = ac.createGain();
+    g.gain.setValueAtTime(0.0001, t);
+    g.gain.exponentialRampToValueAtTime(0.09 * amount, t + 0.5);
+    g.gain.setValueAtTime(0.09 * amount, t + 1.6);
+    g.gain.exponentialRampToValueAtTime(0.0001, t + 3.8);
+    s.connect(f).connect(g).connect(out);
+    s.start(t, Math.random());
+    s.stop(t + 4);
+    for (let n = 0; n < 2 + Math.round(amount * 2); n++) {
+      const f0 = 1800 + Math.random() * 900;
+      tone(f0, 0.5, { vol: 0.012 * amount, when: 0.4 + Math.random() * 1.6, slide: Math.random() < 0.5 ? 500 : -400, attack: 0.05 });
+    }
+  },
   // A thunder rumble rolling in after a lightning flash.
   thunder() {
     if (!ensure()) return;

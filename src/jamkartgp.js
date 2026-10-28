@@ -2,6 +2,7 @@ import { runArcade } from './core/arcade.js';
 import { JamKartGP } from './games/jamkartgp/JamKartGP.js';
 import { loadKarts } from './games/jamkartgp/kart.js';
 import { loadProps } from './games/jamkartgp/details.js';
+import { getRecord } from './games/jamkartgp/records.js';
 
 await Promise.all([loadKarts(), loadProps()]);
 
@@ -24,9 +25,17 @@ runArcade({
   modes: ['1 PLAYER · VS CPU', '2 PLAYERS'],
   options: [
     { key: 'hazards', label: 'HAZARDS', choices: ['ALL ON', 'NO GATES', 'BOOST ONLY', 'OFF'] },
+    { key: 'conditions', label: 'CONDITIONS', choices: ['RANDOM', 'CLASSIC', 'DRY SUNSET', 'WET RACE', 'NIGHT RACE'] },
     { key: 'graphics', label: 'GRAPHICS', choices: ['AUTO', 'HIGH', 'MEDIUM', 'LOW'] },
   ],
   endTitle: 'RACE OVER',
   song: 'drive',
   icon: 'jamkart',
+  // Today's fastest lap, under the top scores on the title screen.
+  records: () => {
+    const r = getRecord();
+    if (!r) return [];
+    const time = `${Math.floor(r.lap / 60)}:${(r.lap % 60).toFixed(1).padStart(4, '0')}`;
+    return [{ label: 'FASTEST LAP TODAY', value: [time, r.name, r.kart].filter(Boolean).join(' · ') }];
+  },
 });

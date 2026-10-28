@@ -320,6 +320,8 @@ function buildStands(scene, track, place, reserved, at, fits) {
       }
     }
   }
+  // Where the stands are, for the crowd's sound.
+  track.stands = stands.map((st) => st.getWorldPosition(new THREE.Vector3()));
   if (!people.length) return () => {};
   const body = new THREE.InstancedMesh(new THREE.BoxGeometry(0.5, 0.75, 0.35), new THREE.MeshStandardMaterial({ roughness: 0.8 }), people.length);
   const head = new THREE.InstancedMesh(new THREE.SphereGeometry(0.17, 8, 6), new THREE.MeshStandardMaterial({ color: 0xc98f6b, roughness: 0.7 }), people.length);

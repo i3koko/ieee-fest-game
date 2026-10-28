@@ -73,6 +73,7 @@ function template(cfg) {
       <div class="top3-box">
         <div class="top3-title">TOP SCORES</div>
         <ol class="top3" id="top3"></ol>
+        <ul class="records" id="records"></ul>
       </div>
       <div class="prompt">PRESS START</div>
       <div class="controls-hint">${cfg.controlsHint}</div>
@@ -251,8 +252,10 @@ export function runArcade(cfg) {
     game = new cfg.Game(view, null, { demo: true });
     const top = getScores(cfg.id).slice(0, 3);
     $('top3').innerHTML = top.length
-      ? top.map((s) => `<li><b>${esc(s.name)}</b><span>${s.score.toLocaleString()}</span></li>`).join('')
+      ? top.map((s) => `<li><b>${esc(s.name)}</b>${s.detail ? `<em>${esc(s.detail)}</em>` : ''}<span>${s.score.toLocaleString()}</span></li>`).join('')
       : '<li class="empty">Be the first!</li>';
+    // Extra records a game keeps (Jam Kart GP: today's fastest lap).
+    $('records').innerHTML = (cfg.records?.() ?? []).map((r) => `<li><b>${esc(r.label)}</b>${esc(r.value)}</li>`).join('');
     $('title-board-table').innerHTML = boardRows();
     $('title-ui').classList.remove('show-board');
     idle = 0;
@@ -321,6 +324,7 @@ export function runArcade(cfg) {
     entry = null;
     document.activeElement?.blur();
     lastRank = save ? addScore(cfg.id, { name: cleanName(), id: cleanId(), detail: result.detail }, result.score) : -1;
+    if (save) game.signed?.({ name: cleanName(), id: cleanId() });
     save ? sfx.start() : sfx.back();
     showBoard();
   }

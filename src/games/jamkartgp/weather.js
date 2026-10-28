@@ -230,6 +230,11 @@ export function buildWeather(scene, renderer, { rainDrops = 2200 } = {}) {
     flash() {
       state.flash = 0.25;
     },
+    // Jump straight to a weather (a new race's opening conditions).
+    snap(cloud, wet) {
+      state.cloud = cloud;
+      state.wet = wet;
+    },
     // Ease towards the target weather (it rolls in over several seconds).
     set(cloud, wet, dt) {
       const k = Math.min(dt * 0.25, 1);
