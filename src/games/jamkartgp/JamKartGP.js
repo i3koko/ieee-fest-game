@@ -576,6 +576,9 @@ export class JamKartGP {
     this.selecting = true;
     this.selectT = 0;
     for (const k of this.karts.filter((o) => o.human)) {
+      // Player 2's kart starts life as a CPU (marked ready) until 2-player
+      // mode is picked, so every player must start the select un-readied.
+      k.ready = false;
       k.menuPrev = { left: true, right: true, up: true, down: true, fire: true };
       this.#renderSelect(k);
     }
