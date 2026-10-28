@@ -208,6 +208,10 @@ export function makeKart(modelId, color) {
   // steering pivot; every wheel spins by its own radius.
   for (const w of wheels) group.attach(w);
   const clearance = measureClearance(modelId, body, wheels, group);
+  body.traverse((o) => {
+    if (o.isMesh) o.castShadow = true;
+  });
+  for (const w of wheels) w.traverse((o) => o.isMesh && (o.castShadow = true));
   const steer = [];
   for (const w of wheels) {
     w.userData.radius = new THREE.Box3().setFromObject(w).getSize(new THREE.Vector3()).y / 2;

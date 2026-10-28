@@ -227,42 +227,43 @@ const worldVert = /* glsl */ `
 
 // Asphalt: fine grain, a darker rubbered racing line, white edge lines, the
 // chequered start line and painted grid slots.
-const roadFrag = /* glsl */ `
-  uniform vec3 uFogColor;
-  uniform float uFogNear, uFogFar, uLength, uHalf;
+// Asphalt, drawn inside a standard lit material (so it takes shadows and
+// reflections): fine grain, a darker rubbered racing line, white edge
+// lines, the chequered start line and painted grid slots. uWet darkens it.
+const ROAD_GLSL = /* glsl */ `
+  uniform float uHalf, uWet;
   uniform float uGrid[8];
   uniform float uGridSide[8];
-  varying vec2 vUv;
-  varying vec3 vWorld;
-  float hash(vec2 p) { return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }
-  void main() {
-    float u = vUv.x;
-    float v = vUv.y;
-    vec2 q = vWorld.xz * 0.35;
+  varying vec2 vRoadUv;
+  varying vec3 vRoadWorld;
+  float roadHash(vec2 p) { return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }
+  vec3 roadColor() {
+    float u = vRoadUv.x;
+    float v = vRoadUv.y;
+    vec2 q = vRoadWorld.xz * 0.35;
     vec2 qi = floor(q);
     vec2 qf = fract(q);
     qf = qf * qf * (3.0 - 2.0 * qf);
-    float patchy = mix(mix(hash(qi), hash(qi + vec2(1.0, 0.0)), qf.x), mix(hash(qi + vec2(0.0, 1.0)), hash(qi + vec2(1.0)), qf.x), qf.y);
-    float d = length(vWorld - cameraPosition);
-    float grain = hash(floor(vWorld.xz * 24.0)) * 0.035 * (1.0 - smoothstep(10.0, 40.0, d)) + patchy * 0.035;
-    vec3 col = vec3(0.16, 0.165, 0.175) + grain;
+    float patchy = mix(mix(roadHash(qi), roadHash(qi + vec2(1.0, 0.0)), qf.x), mix(roadHash(qi + vec2(0.0, 1.0)), roadHash(qi + vec2(1.0)), qf.x), qf.y);
+    float d = length(vRoadWorld - cameraPosition);
+    float grain = roadHash(floor(vRoadWorld.xz * 24.0)) * 0.04 * (1.0 - smoothstep(10.0, 40.0, d)) + patchy * 0.04;
+    vec3 col = vec3(0.24, 0.245, 0.255) + grain;
     col *= 0.88 + 0.12 * smoothstep(0.15, 0.0, abs(u - 0.5 - 0.12 * sin(v * 0.01)));
     float edge = step(u, 0.022) + step(0.978, u);
-    col = mix(col, vec3(0.92), edge);
+    col = mix(col, vec3(0.9), edge);
     if (v < 2.5) {
       float c = mod(floor(u * 16.0) + floor(v * 2.0), 2.0);
-      col = mix(vec3(0.05), vec3(0.95), c);
+      col = mix(vec3(0.05), vec3(0.92), c);
     }
     float lat = uHalf - u * uHalf * 2.0;
     for (int k = 0; k < 8; k++) {
-      float gv = uGrid[k];
-      float d = v - gv;
-      bool box = (abs(d) < 0.18 && lat * uGridSide[k] > 1.1 && lat * uGridSide[k] < 4.5) ||
-                 (d > 0.0 && d < 2.2 && abs(lat * uGridSide[k] - 4.4) < 0.12);
-      if (box) col = vec3(0.92);
+      float dd = v - uGrid[k];
+      bool box = (abs(dd) < 0.18 && lat * uGridSide[k] > 1.1 && lat * uGridSide[k] < 4.5) ||
+                 (dd > 0.0 && dd < 2.2 && abs(lat * uGridSide[k] - 4.4) < 0.12);
+      if (box) col = vec3(0.9);
     }
-    float fog = smoothstep(uFogNear, uFogFar, length(vWorld - cameraPosition));
-    gl_FragColor = vec4(mix(col, uFogColor, fog), 1.0);
+    // Wet tarmac goes dark; the reflections come from the lowered roughness.
+    return col * (1.0 - 0.5 * uWet);
   }`;
 
 // Hazard decals. kind 0: rain puddle, 1: fibre boost strip.
@@ -360,6 +361,7 @@ function buildTerrain(scene, track) {
   const grass = new THREE.MeshStandardMaterial({ map: tex, roughness: 0.95, side: THREE.DoubleSide });
   const ground = new THREE.Mesh(geo, grass);
   ground.userData.ground = 'terrain'; // drawn ground, for tests
+  ground.receiveShadow = true;
   ground.position.set(cx, 0, cz);
   scene.add(ground);
   terrainGrass = grass;
@@ -393,23 +395,26 @@ export function buildBoard(scene, track) {
     grid.push(track.dist[idx] - 1.8);
     gridSide.push(slot % 2 === 0 ? 1 : -1);
   }
-  const roadMat = new THREE.ShaderMaterial({
-    vertexShader: worldVert,
-    fragmentShader: roadFrag,
-    uniforms: {
-      uFogColor: { value: new THREE.Color(FOG.color) },
-      uFogNear: { value: FOG.near },
-      uFogFar: { value: FOG.far },
-      uLength: { value: track.length },
-      uHalf: { value: TRACK_W / 2 },
-      uGrid: { value: grid },
-      uGridSide: { value: gridSide },
-    },
-    side: THREE.DoubleSide,
-  });
+  const roadUniforms = {
+    uHalf: { value: TRACK_W / 2 },
+    uWet: { value: 0 },
+    uGrid: { value: grid },
+    uGridSide: { value: gridSide },
+  };
+  const roadMat = new THREE.MeshStandardMaterial({ roughness: 0.9, metalness: 0, envMapIntensity: 0.4, side: THREE.DoubleSide });
+  roadMat.onBeforeCompile = (shader) => {
+    Object.assign(shader.uniforms, roadUniforms);
+    shader.vertexShader = shader.vertexShader
+      .replace('#include <common>', '#include <common>\nvarying vec2 vRoadUv;\nvarying vec3 vRoadWorld;')
+      .replace('#include <uv_vertex>', '#include <uv_vertex>\nvRoadUv = uv;\nvRoadWorld = (modelMatrix * vec4(position, 1.0)).xyz;');
+    shader.fragmentShader = shader.fragmentShader
+      .replace('#include <common>', `#include <common>\n${ROAD_GLSL}`)
+      .replace('#include <map_fragment>', 'diffuseColor.rgb = roadColor();');
+  };
   const onRoad = (k, lat) => surfaceY(track, k, lat) + 0.02;
   const road = new THREE.Mesh(strip(track, TRACK_W / 2, -TRACK_W / 2, onRoad), roadMat);
   road.userData.ground = 'road';
+  road.receiveShadow = true;
   scene.add(road);
   // Grass verges from the tarmac's edge down to the ground on both sides,
   // sampled finely across so the grass is exactly where the karts sit, and
@@ -418,6 +423,7 @@ export function buildBoard(scene, track) {
     const g = worldUV(bandStrip(track, vergeLats(s), (k, lat) => vergeY(track, k, lat)), 18);
     const verge = new THREE.Mesh(g, terrainGrass);
     verge.userData.ground = 'verge';
+    verge.receiveShadow = true;
     scene.add(verge);
   }
 
@@ -429,6 +435,12 @@ export function buildBoard(scene, track) {
     lights: [],
     hazards,
     terrainY,
+    // Wet weather: darker, glossier tarmac.
+    setWet(wet) {
+      roadUniforms.uWet.value = wet;
+      roadMat.roughness = 0.9 - 0.7 * wet;
+      roadMat.envMapIntensity = 0.4 + 1.1 * wet;
+    },
     setStartLights: details.setStartLights,
     setHazards(on) {
       hazards.set(on);

@@ -1,9 +1,10 @@
 import * as THREE from 'three';
 import { sfx } from '../../core/audio.js';
-import { createEngine, kartSfx } from './sounds.js';
+import { createEngine, kartSfx, setRain } from './sounds.js';
 import { music } from '../../core/music.js';
 import { TRACK_W, SAMPLES, FOG, buildTrack, buildBoard, locate, ahead, groundAt, surfaceY, gateHeight } from './track.js';
 import { makeKart, MODELS, PALETTE, limitSuspension } from './kart.js';
+import { buildWeather } from './weather.js';
 
 const RACERS = 8;
 const GRAVITY = 30;
@@ -52,6 +53,16 @@ const ITEMS = {
     name: 'ECC SHIELD', icon: '◈', color: '#7fd4ff',
     line: 'Blocks the next hit. Error-correcting codes add spare bits so damaged data can be repaired.',
   },
+};
+
+// Rendering quality. Stage 4 makes this automatic; 'high' for now.
+const QUALITY = { shadows: true, rain: 2200 };
+
+// The mid-race weather change explains itself too.
+const RAIN_INFO = {
+  name: 'RAIN FADE',
+  color: '#7fc8ff',
+  line: 'Heavy rain soaks up radio waves, so satellite TV and 5G signals fade in a storm. It soaks up your grip too.',
 };
 
 // Track features explain themselves the first time a player meets one.
@@ -117,22 +128,22 @@ export class JamKartGP {
     this.scene = new THREE.Scene();
     this.scene.background = new THREE.Color(FOG.color);
     this.scene.fog = new THREE.Fog(FOG.color, FOG.near, FOG.far);
-    this.scene.add(new THREE.HemisphereLight(0xcfe2ff, 0x4a5a32, 1.5));
-    const sun = new THREE.DirectionalLight(0xffe6c4, 2.2);
-    sun.position.set(40, 80, 30);
-    this.scene.add(sun);
+    // Sky, clouds, sun (with shadows), fog and rain.
+    this.weather = buildWeather(this.scene, view.renderer, { shadows: QUALITY.shadows, rainDrops: QUALITY.rain });
+    this.wet = 0;
 
     this.track = buildTrack();
     this.board = buildBoard(this.scene, this.track);
     this.#buildBoxes();
     this.#buildSparks();
+    this.#buildSpray();
     this.walls = [];
     this.rings = [];
     this.karts = Array.from({ length: RACERS }, (_, i) => this.#makeKart(i));
     this.#setHumans();
 
     if (demo) {
-      this.demoCam = new THREE.PerspectiveCamera(62, 1, 0.3, 600);
+      this.demoCam = new THREE.PerspectiveCamera(62, 1, 0.3, 1200);
       view.use(this.scene, [this.demoCam], { strength: 0.3, radius: 0.4, threshold: 0.95 });
       this.#placeDemoCam(1);
     } else {
@@ -219,7 +230,7 @@ export class JamKartGP {
       y: 0, vy: 0, air: false, airT: 0,
       hits: 0, used: 0, prevFire: true, cpuDelay: 0, cpuLane: (Math.random() - 0.5) * 6, squash: 1,
       skill: 0.88 + Math.random() * 0.1, // CPU pace, as a share of the kart's top speed
-      cam: new THREE.PerspectiveCamera(70, 1, 0.3, 600), camPos: new THREE.Vector3(), camLook: new THREE.Vector3(),
+      cam: new THREE.PerspectiveCamera(70, 1, 0.3, 1200), camPos: new THREE.Vector3(), camLook: new THREE.Vector3(),
     };
     return k;
   }
@@ -490,7 +501,106 @@ export class JamKartGP {
   // How hard kart k can corner right now (m/s²).
   #latGrip(k, zone) {
     const offRoad = Math.abs(k.lat) > TRACK_W / 2 + 0.3;
-    return LAT_G * (k.spec.grip / 15) * (zone?.type === 'rain' ? 0.6 : 1) * (offRoad ? 0.75 : 1);
+    return LAT_G * (k.spec.grip / 15) * (zone?.type === 'rain' ? 0.6 : 1) * (offRoad ? 0.75 : 1) * (1 - 0.18 * this.wet);
+  }
+
+  // Weather follows the race: sunny with drifting clouds for most of lap 1,
+  // the sky darkens late in the lap, and it rains on lap 2. The title screen
+  // drifts between sunshine and showers.
+  #updateWeather(dt, live) {
+    const smooth = (a, b, v) => {
+      const t = clamp((v - a) / (b - a), 0, 1);
+      return t * t * (3 - 2 * t);
+    };
+    const leader = Math.max(...this.karts.map((k) => k.prog)) / this.track.length;
+    const x = this.forceWeather ?? (this.demo ? 0.6 + 0.65 * Math.sin(this.time / 30) : live || this.endTimer !== null ? leader : 0);
+    this.weather.set(0.12 + 0.88 * smooth(0.45, 1.0, x), smooth(0.95, 1.3, x), dt);
+    this.wet = this.weather.wet;
+    this.board.setWet(this.wet);
+
+    const humans = this.karts.filter((k) => k.human);
+    const focuses = this.demo ? [this.demoCam.position] : humans.map((k) => k.cam.position);
+    const watched = this.demo ? [this.karts.find((k) => k.place === 0) ?? this.karts[0]] : humans;
+    const centre = new THREE.Vector3();
+    for (const k of watched) centre.add(new THREE.Vector3(k.x, k.y, k.z));
+    centre.divideScalar(watched.length);
+    this.weather.update(dt, this.time, focuses, centre);
+
+    if (!this.demo && live && !this.rainWarned && x > 0.85) {
+      this.rainWarned = true;
+      for (const k of humans) {
+        this.#big(k, 'RAIN IS COMING!', 'warn', 2);
+        this.#card(k, RAIN_INFO);
+      }
+    }
+    // Thunder now and then in a downpour.
+    if (!this.demo && this.wet > 0.6 && Math.random() < dt / 10) {
+      this.weather.flash();
+      setTimeout(() => kartSfx.thunder(), 600 + Math.random() * 900);
+    }
+  }
+
+  // Spray thrown up behind the wheels on a wet track.
+  #buildSpray() {
+    const n = 500;
+    const geo = new THREE.BufferGeometry();
+    geo.setAttribute('position', new THREE.BufferAttribute(new Float32Array(n * 3), 3));
+    geo.setAttribute('color', new THREE.BufferAttribute(new Float32Array(n * 3), 3));
+    // Soft round puffs, not square points.
+    const c = document.createElement('canvas');
+    c.width = c.height = 64;
+    const g = c.getContext('2d');
+    const grad = g.createRadialGradient(32, 32, 0, 32, 32, 32);
+    grad.addColorStop(0, 'rgba(255,255,255,1)');
+    grad.addColorStop(0.5, 'rgba(255,255,255,0.4)');
+    grad.addColorStop(1, 'rgba(255,255,255,0)');
+    g.fillStyle = grad;
+    g.fillRect(0, 0, 64, 64);
+    this.sprayPts = new THREE.Points(
+      geo,
+      new THREE.PointsMaterial({ size: 1.4, map: new THREE.CanvasTexture(c), vertexColors: true, transparent: true, blending: THREE.AdditiveBlending, depthWrite: false })
+    );
+    this.sprayPts.frustumCulled = false;
+    this.scene.add(this.sprayPts);
+    this.spray = Array.from({ length: n }, () => ({ life: 0, x: 0, y: -10, z: 0, vx: 0, vy: 0, vz: 0 }));
+    this.sprayNext = 0;
+  }
+
+  #updateSpray(dt) {
+    if (this.wet > 0.25) {
+      for (const k of this.karts) {
+        if (Math.abs(k.v) < 10 || Math.random() > this.wet * 0.9) continue;
+        const fx = Math.sin(k.h);
+        const fz = Math.cos(k.h);
+        for (const s of [-1, 1]) {
+          const p = this.spray[this.sprayNext++ % this.spray.length];
+          p.life = 0.5 + Math.random() * 0.3;
+          p.x = k.x - fx * 1.6 + fz * s * 1.0;
+          p.y = k.y + 0.25;
+          p.z = k.z - fz * 1.6 - fx * s * 1.0;
+          p.vx = k.vx * 0.3 + (Math.random() - 0.5) * 2;
+          p.vy = 1 + Math.random() * 1.5;
+          p.vz = k.vz * 0.3 + (Math.random() - 0.5) * 2;
+        }
+      }
+    }
+    const pos = this.sprayPts.geometry.attributes.position;
+    const col = this.sprayPts.geometry.attributes.color;
+    this.spray.forEach((p, n) => {
+      if (p.life > 0) {
+        p.life -= dt;
+        p.x += p.vx * dt;
+        p.y += p.vy * dt;
+        p.z += p.vz * dt;
+        p.vx *= 1 - 2 * dt;
+        p.vz *= 1 - 2 * dt;
+      }
+      const a = Math.max(0, Math.min(1, p.life * 2)) * 0.35;
+      pos.setXYZ(n, p.x, p.life > 0 ? p.y : -10, p.z);
+      col.setXYZ(n, a, a * 1.02, a * 1.06);
+    });
+    pos.needsUpdate = true;
+    col.needsUpdate = true;
   }
 
   // CPU braking: look down the road and brake if a corner ahead needs a
@@ -673,6 +783,8 @@ export class JamKartGP {
       this.board.setStartLights(live ? 0 : Math.min(5, Math.floor(this.preT / 0.6)));
     }
     for (const l of this.board.lights) l.mat.color.copy(l.base).multiplyScalar(0.6 + 0.4 * Math.sin(this.time * 3 + l.phase));
+    this.#updateWeather(dt, live);
+    this.#updateSpray(dt);
 
     if (this.demo) this.#placeDemoCam(dt);
     else {
@@ -742,7 +854,7 @@ export class JamKartGP {
     yaw = clamp(yaw, -yawCap, yawCap);
 
     // Tyres kill nearly all sideways slide (wet track and grass let go more).
-    const grip = k.spec.grip * 1.6 * (zone?.type === 'rain' ? 0.3 : 1) * (offRoad ? 0.75 : 1);
+    const grip = k.spec.grip * 1.6 * (zone?.type === 'rain' ? 0.3 : 1) * (offRoad ? 0.75 : 1) * (1 - 0.3 * this.wet);
     vl *= Math.exp(-grip * dt);
 
     k.vx = fx * vf + fz * vl;
@@ -1271,6 +1383,7 @@ export class JamKartGP {
   }
 
   #updateAudio(live) {
+    setRain(this.wet);
     const lead = Math.max(...this.karts.map((k) => k.lap));
     if (live && !this.endTimer) {
       music.set({ intensity: [0.55, 0.72, 0.92][clamp(lead, 0, LAPS - 1)], bpm: 110 + clamp(lead, 0, 2) * 5 });
@@ -1307,6 +1420,7 @@ export class JamKartGP {
     this.#rank();
     // The results screen stops calling update(), so silence the engines now.
     this.engines.forEach((e) => e?.stop());
+    setRain(0);
     this.engines = [null, null];
     const humans = this.karts.filter((k) => k.human);
     const best = [...humans].sort((a, b) => this.#score(b) - this.#score(a))[0];
@@ -1345,6 +1459,7 @@ export class JamKartGP {
   }
 
   dispose() {
+    if (!this.demo) setRain(0);
     this.engines?.forEach((e) => e?.stop());
     if (this.hudRoot) this.hudRoot.innerHTML = '';
     this.scene.traverse((o) => {

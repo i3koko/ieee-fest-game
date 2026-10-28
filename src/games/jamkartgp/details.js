@@ -125,6 +125,9 @@ export function buildDetails(scene, track, terrainY, reserved) {
   };
   // Places a model beside the track facing the road (front is +Z).
   const place = (obj, i, lat, extraRot = 0) => {
+    obj.traverse((o) => {
+      if (o.isMesh) o.castShadow = o.receiveShadow = true;
+    });
     const [x, z] = at(i, lat);
     const s = track.side[i];
     const toRoad = Math.atan2(-s.x * Math.sign(lat), -s.y * Math.sign(lat));
@@ -134,7 +137,6 @@ export function buildDetails(scene, track, terrainY, reserved) {
     return obj;
   };
 
-  buildSky(scene);
   buildKerbs(scene, track);
   buildGravel(scene, track);
   buildArmco(scene, track);
@@ -154,63 +156,6 @@ export function buildDetails(scene, track, terrainY, reserved) {
     setStartLights: lights,
     setSigns: (on) => Object.entries(signs).forEach(([type, list]) => list.forEach((g) => (g.visible = !!on[type]))),
   };
-}
-
-// ------------------------------------------------------------------ sky
-
-function buildSky(scene) {
-  const sunDir = new THREE.Vector3(-0.55, 0.32, -0.77).normalize();
-  const sky = new THREE.Mesh(
-    new THREE.SphereGeometry(900, 32, 16),
-    new THREE.ShaderMaterial({
-      side: THREE.BackSide,
-      depthWrite: false,
-      uniforms: { uSun: { value: sunDir } },
-      vertexShader: /* glsl */ `
-        varying vec3 vDir;
-        void main() {
-          vDir = normalize(position);
-          gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
-        }`,
-      fragmentShader: /* glsl */ `
-        uniform vec3 uSun;
-        varying vec3 vDir;
-        void main() {
-          float h = max(vDir.y, 0.0);
-          vec3 zenith = vec3(0.12, 0.3, 0.68);
-          vec3 horizon = vec3(0.62, 0.73, 0.86);
-          vec3 col = mix(horizon, zenith, pow(h, 0.55));
-          float s = max(dot(vDir, uSun), 0.0);
-          col += vec3(1.0, 0.75, 0.45) * pow(s, 8.0) * 0.35 + vec3(1.0, 0.95, 0.8) * pow(s, 600.0) * 2.0;
-          gl_FragColor = vec4(col, 1.0);
-        }`,
-    })
-  );
-  sky.renderOrder = -1;
-  scene.add(sky);
-
-  // A few soft clouds.
-  const tex = canvasTexture(256, 128, (g, w, h) => {
-    for (let n = 0; n < 14; n++) {
-      const x = w * (0.2 + Math.random() * 0.6);
-      const y = h * (0.45 + (Math.random() - 0.5) * 0.3);
-      const r = 20 + Math.random() * 30;
-      const grad = g.createRadialGradient(x, y, 0, x, y, r);
-      grad.addColorStop(0, 'rgba(255,255,255,0.8)');
-      grad.addColorStop(1, 'rgba(255,255,255,0)');
-      g.fillStyle = grad;
-      g.fillRect(0, 0, w, h);
-    }
-  });
-  const mat = new THREE.SpriteMaterial({ map: tex, transparent: true, depthWrite: false, fog: false, opacity: 0.85 });
-  for (let n = 0; n < 14; n++) {
-    const c = new THREE.Sprite(mat);
-    const a = Math.random() * Math.PI * 2;
-    const d = 400 + Math.random() * 300;
-    c.position.set(Math.cos(a) * d + 70, 110 + Math.random() * 90, Math.sin(a) * d + 40);
-    c.scale.set(220, 80, 1);
-    scene.add(c);
-  }
 }
 
 // ------------------------------------------------------------------ trackside
@@ -625,6 +570,7 @@ function buildForest(scene, terrainY, trackDist, free, rand) {
   const broad = spots.filter((s) => s[3]);
   const mk = (geo, color, list) => {
     const mesh = new THREE.InstancedMesh(geo, new THREE.MeshStandardMaterial({ color, roughness: 0.9, flatShading: true }), list.length);
+    mesh.castShadow = true;
     const m = new THREE.Matrix4();
     const q = new THREE.Quaternion();
     const c = new THREE.Color();

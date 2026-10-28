@@ -177,7 +177,28 @@ export function createEngine(modelId) {
 
 // Effects ------------------------------------------------------------------
 
+// Rain on the roof: filtered noise whose level follows the downpour.
+let rainGain = null;
+export function setRain(amount) {
+  if (!ensure()) return;
+  if (!rainGain) {
+    const src = noiseLoop();
+    const bp = filt('bandpass', 2600, 0.4);
+    const lp = filt('lowpass', 6000, 0.5);
+    rainGain = ac.createGain();
+    rainGain.gain.value = 0;
+    src.connect(bp).connect(lp).connect(rainGain).connect(out);
+  }
+  rainGain.gain.setTargetAtTime(amount * 0.12, now(), 0.4);
+}
+
 export const kartSfx = {
+  // A thunder rumble rolling in after a lightning flash.
+  thunder() {
+    if (!ensure()) return;
+    burst(0.12, { vol: 0.12, type: 'highpass', freq: 1500, to: 800 });
+    burst(2.8, { vol: 0.32, type: 'lowpass', freq: 260, to: 60, when: 0.08 });
+  },
   // Item roulette: quick rising blips.
   pickup() {
     if (!ensure()) return;
