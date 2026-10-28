@@ -10,12 +10,11 @@ const GRAVITY = 30;
 const LAPS = 2; // a real-circuit lap is long, so two make a booth-sized race
 const BOOST_BONUS = 9; // compression adds this to a kart's top speed (m/s)
 const BRAKE = 32;
-// Sideways grip limit: how hard a kart can corner (m/s², ~2 g for a grippy
-// kart, scaled by each model's grip). Hairpins need braking; drifting lets
-// you carry a bit more speed through.
-const LAT_G = 20;
-const DRIFT_LAT = 1.35;
-const TAP = 0.25; // a brake press shorter than this is a drift tap
+// Sideways grip limit (m/s², scaled by each model's grip): generous, so
+// most corners take full throttle and only the tightest hairpins need a lift.
+const LAT_G = 38;
+// Suspension springs (k) and dampers (c) for heave, pitch and roll.
+const SUSP = { k: 150, c: 9, kp: 110, cp: 9, kr: 120, cr: 9 };
 const SELECT_TIMEOUT = 30;
 const EDGE = TRACK_W / 2 + 3.5; // karts can run wide onto the verge, up to the barrier
 const ROAD = TRACK_W / 2 - 1.3; // lanes the CPU drivers keep to
@@ -26,8 +25,6 @@ const JAM_RANGE = 45; // jammers only reach nearby receivers (all of them)
 const SPIN_TIME = 1.1;
 const SHIELD_TIME = 8;
 const BOOST_TIME = 2.2;
-const DRIFT_GRIP = 5.5; // sideways grip while drifting (normal is per model)
-const MAX_SLIP = 0.45; // radians a drifting kart may point away from where it's going
 const FIREWALL_LIFE = 14;
 const FINISH_GRACE = 25; // seconds the field gets after the winner crosses
 const RACE_CAP = 160;
@@ -217,7 +214,7 @@ export class JamKartGP {
       idx: 0, lastIdx: 0, lat: 0, lap: 0, prog: 0, place: i,
       finished: false, finishTime: 0, finalPlace: null, lapStart: 0, bestLap: Infinity,
       item: null, boostT: 0, jamT: 0, shieldT: 0, spinT: 0, spinA: 0, scrapeT: 0, wrongT: 0,
-      drift: 0, driftCharge: 0, wasDrifting: false, driftDir: 0, prevBrake: true, item2: null, emiT: 0, gateT: 0, seen: new Set(), groundPitch: 0, groundRoll: 0,
+      item2: null, emiT: 0, gateT: 0, susp: { y: 0, vy: 0, pitch: 0, pv: 0, roll: 0, rv: 0 }, seen: new Set(), groundPitch: 0, groundRoll: 0,
       y: 0, vy: 0, air: false, airT: 0,
       hits: 0, used: 0, prevFire: true, cpuDelay: 0, cpuLane: (Math.random() - 0.5) * 6, squash: 1,
       skill: 0.88 + Math.random() * 0.1, // CPU pace, as a share of the kart's top speed
@@ -264,7 +261,7 @@ export class JamKartGP {
     }
   }
 
-  // Pooled spark particles for wall scrapes, drifts and hits.
+  // Pooled spark particles for wall hits and bumps.
   #buildSparks() {
     const n = 400;
     const geo = new THREE.BufferGeometry();
@@ -324,7 +321,6 @@ export class JamKartGP {
         </div>
         <div class="jk-speed" data-speed>0<small>KM/H</small></div>
         <div class="jk-item" data-item><div class="slot" data-slot></div><div class="slot2" data-slot2></div><div class="key" data-key></div></div>
-        <div class="jk-drift" data-drift><i></i></div>
         <div class="jk-card" data-card><b></b><span></span></div>
         <div class="jk-big" data-big></div>
         <div class="static" data-static></div>
@@ -355,7 +351,7 @@ export class JamKartGP {
         const h = root.querySelector(`[data-half="${i}"]`);
         const q = (k) => h.querySelector(`[data-${k}]`);
         return {
-          root: h, tag: q('tag'), place: q('place'), lap: q('lap'), speed: q('speed'), item: q('item'), slot: q('slot'), slot2: q('slot2'), key: q('key'), card: q('card'), big: q('big'), static: q('static'), drift: q('drift'), cardT: 0, bigT: 0,
+          root: h, tag: q('tag'), place: q('place'), lap: q('lap'), speed: q('speed'), item: q('item'), slot: q('slot'), slot2: q('slot2'), key: q('key'), card: q('card'), big: q('big'), static: q('static'), cardT: 0, bigT: 0,
           who: q('who'), mname: q('mname'), blurb: q('blurb'), stats: q('stats'), perk: q('perk'), colors: q('colors'), ready: q('ready'),
         };
       }),
@@ -422,13 +418,8 @@ export class JamKartGP {
       fire ||= [0, 2, 3, 5].some((b) => p.buttons[b]?.pressed);
     }
     const pressed = fire && !k.prevFire;
-    // A quick tap of brake (released within TAP s) starts a drift; holding
-    // it just brakes.
-    if (brake && !k.prevBrake) k.brakeAt = this.time;
-    const drift = !brake && k.prevBrake && this.time - (k.brakeAt ?? -9) < TAP;
     k.prevFire = fire;
-    k.prevBrake = brake;
-    return { steer: clamp(steer, -1, 1), brake, fire: pressed, drift };
+    return { steer: clamp(steer, -1, 1), brake, fire: pressed };
   }
 
   // Follows the racing line, grabs boxes, dodges firewalls and other karts,
@@ -496,9 +487,9 @@ export class JamKartGP {
   }
 
   // How hard kart k can corner right now (m/s²).
-  #latGrip(k, zone, drifting) {
+  #latGrip(k, zone) {
     const offRoad = Math.abs(k.lat) > TRACK_W / 2 + 0.3;
-    return LAT_G * (k.spec.grip / 15) * (drifting ? DRIFT_LAT : 1) * (zone?.type === 'rain' ? 0.55 : 1) * (offRoad ? 0.7 : 1);
+    return LAT_G * (k.spec.grip / 15) * (zone?.type === 'rain' ? 0.6 : 1) * (offRoad ? 0.75 : 1);
   }
 
   // CPU braking: look down the road and brake if a corner ahead needs a
@@ -689,98 +680,59 @@ export class JamKartGP {
     return null;
   }
 
-  // Car model: the kart carries momentum and only its tyres' sideways grip
-  // turns that into the direction it's facing. Hold brake while turning at
-  // speed to drift (less grip, sharper turn) and charge a mini-turbo.
+  // Kart-racer handling: the kart goes where you point it. Steering is quick
+  // and stays sharp at speed, tyres grip hard (just a hint of slide), only
+  // the very tightest corners at full speed need a lift, and barriers bounce
+  // you back onto the track. A spring-damper suspension moves the body.
   #drive(k, ctl, dt, live) {
     const { tan, side } = this.track;
     for (const t of ['boostT', 'jamT', 'shieldT', 'spinT', 'scrapeT', 'emiT', 'gateT']) k[t] = Math.max(0, k[t] - dt);
-    const zone = live && !k.air ? this.#zoneAt(k) : null;
+    const zone = live ? this.#zoneAt(k) : null;
     if (zone) this.#enterZone(k, zone, dt);
 
     const fx = Math.sin(k.h);
     const fz = Math.cos(k.h);
     let vf = k.vx * fx + k.vz * fz; // forward speed
     let vl = k.vx * fz - k.vz * fx; // sideways slide
+    const vfIn = vf;
 
     const top = k.maxV ?? k.spec.top;
     // Running wide onto the grass costs speed.
     const offRoad = Math.abs(k.lat) > TRACK_W / 2 + 0.3;
-    const maxV = (k.boostT > 0 ? top + BOOST_BONUS : top) * (k.jamT > 0 ? 0.8 : 1) * (offRoad ? 0.62 : 1);
-    const steerIn = k.spinT > 0 ? 0 : ctl.steer;
-    // Drift: tap brake while turning to kick into it (just a little bounce of
-    // the body, no jump), keep holding the turn to stay in it (more steer =
-    // tighter, counter-steer = wider), let go of the turn for the mini-turbo.
-    if (live && ctl.drift && !k.driftDir && !k.air && k.spinT <= 0 && Math.abs(steerIn) > 0.25 && vf > 12) {
-      k.driftDir = Math.sign(steerIn);
-      k.hopT = 0.22;
-      if (k.human) kartSfx.hop();
-    }
-    if (k.driftDir && (Math.abs(steerIn) < 0.15 || vf < 9 || k.spinT > 0 || !live)) k.driftDir = 0;
-    k.hopT = Math.max(0, (k.hopT ?? 0) - dt);
-    const drifting = !!k.driftDir;
+    const maxV = (k.boostT > 0 ? top + BOOST_BONUS : top) * (k.jamT > 0 ? 0.8 : 1) * (offRoad ? k.spec.offroad ?? 0.62 : 1);
 
+    // Engine and brakes. Holding brake only ever slows you down.
     if (!live) vf = 0;
-    else if (k.air) {
-      // No traction in the air: keep whatever speed you launched with.
-    } else if (k.spinT > 0) vf = Math.max(0, vf - 40 * dt);
-    else if (ctl.brake && !drifting) vf = Math.max(-10, vf - BRAKE * dt);
+    else if (k.spinT > 0) vf = Math.max(0, vf - 40 * dt);
+    else if (ctl.brake) vf = Math.max(-8, vf - BRAKE * dt);
     else if (vf < maxV) {
-      // Strong pull off the line that tapers off near top speed.
-      const accel = k.boostT > 0 ? 70 : k.spec.accel * (1.25 - 0.85 * clamp(vf / maxV, 0, 1));
+      // Snappy pull off the line that tapers off near top speed.
+      const accel = k.boostT > 0 ? 45 : k.spec.accel * (1.35 - 0.9 * clamp(vf / maxV, 0, 1));
       vf = Math.min(maxV, vf + accel * dt);
-    } else vf = Math.max(maxV, vf - 30 * dt);
+    } else vf = Math.max(maxV, vf - 20 * dt);
 
     // Hills: gravity slows you climbing and speeds you up coming down.
     const { height, dist } = this.track;
     const climb = (height[ahead(k.idx, 2)] - height[ahead(k.idx, -2)]) / (4 * dist[1]);
     const along = fx * tan[k.idx].x + fz * tan[k.idx].y;
     const slope = climb * along;
-    if (live && !k.air) vf -= 16 * slope * dt;
+    if (live) vf -= 9.8 * slope * dt;
 
-    let steer = steerIn;
+    // Steering: responds almost instantly and keeps its bite at speed.
+    let steer = k.spinT > 0 ? 0 : ctl.steer;
     if (k.jamT > 0) steer = clamp(steer + Math.sin(this.time * 11 + k.i * 2) * 0.6, -1, 1);
     if (k.emiT > 0) steer = clamp(steer + Math.sin(this.time * 17 + k.i) * 0.35, -1, 1);
-    k.steerVis += (steer - k.steerVis) * Math.min(dt * 8, 1);
-    // Turning needs speed, and gets harder (understeer) near top speed.
-    const turnable = clamp(Math.abs(vf) / 6, 0, 1);
-    const driftSteer = drifting ? k.driftDir * clamp(0.75 + 0.5 * steer * k.driftDir, 0.3, 1.25) * 1.15 : steer;
-    let yaw = driftSteer * k.spec.turn * turnable * (k.air && !drifting ? 0.25 : 1) * Math.sign(vf || 1);
-    // Tyres can only push so hard sideways: at speed the turn is capped by
-    // grip, so fast corners need braking (or a drift).
-    const yawCap = this.#latGrip(k, zone, drifting) / Math.max(Math.abs(vf), 4);
+    k.steerVis += (steer - k.steerVis) * Math.min(dt * 14, 1);
+    const turnable = clamp(Math.abs(vf) / 4, 0, 1);
+    let yaw = k.steerVis * k.spec.turn * turnable * Math.sign(vf || 1);
+    // Only the tightest corners at full speed run out of grip.
+    const yawCap = this.#latGrip(k, zone) / Math.max(Math.abs(vf), 4);
     yaw = clamp(yaw, -yawCap, yawCap);
 
-    // Tyres pull the slide back in line; the looser they are, the more the
-    // kart keeps travelling its old way while the nose turns.
-    const grip = k.air && !drifting ? 0 : (drifting ? DRIFT_GRIP : k.spec.grip) * (zone?.type === 'rain' ? 0.25 : 1) * (k.lat > TRACK_W / 2 || k.lat < -TRACK_W / 2 ? 0.7 : 1);
-    const speedIn = Math.hypot(vf, vl);
+    // Tyres kill nearly all sideways slide (wet track and grass let go more).
+    const grip = k.spec.grip * 1.6 * (zone?.type === 'rain' ? 0.3 : 1) * (offRoad ? 0.75 : 1);
     vl *= Math.exp(-grip * dt);
-    if (drifting && vf > 0) {
-      // A drift trades a little speed for the slide instead of bleeding it
-      // all, and the slide angle is capped so it stays controllable.
-      const speed = speedIn * (1 - 0.06 * dt);
-      const slip = clamp(Math.atan2(vl, vf), -MAX_SLIP, MAX_SLIP);
-      vf = speed * Math.cos(slip);
-      vl = speed * Math.sin(slip);
-    }
 
-    // Mini-turbo: a long, committed drift pays out a boost when released.
-    if (drifting) {
-      k.driftCharge = Math.min(k.driftCharge + dt * (k.spec.driftRate ?? 1), 2.5);
-      if (Math.random() < 0.5) this.#spark(k.x - fx * 1.8, k.y + 0.3, k.z - fz * 1.8, k.driftCharge > 1.6 ? 0xff9a1f : 0x6ad8ff, 1, 3);
-    } else if (k.wasDrifting) {
-      if (k.driftCharge > 0.8) {
-        k.boostT = Math.max(k.boostT, k.driftCharge > 1.6 ? 1.1 : 0.6);
-        if (k.human) kartSfx.turbo(k.driftCharge > 1.6);
-      }
-      k.driftCharge = 0;
-    }
-    k.wasDrifting = drifting;
-    k.drift = drifting ? 1 : Math.max(0, k.drift - dt * 4);
-
-    // Back to world velocity, then turn the nose (momentum stays put until
-    // the tyres catch up next frame), then move.
     k.vx = fx * vf + fz * vl;
     k.vz = fz * vf - fx * vl;
     k.h -= yaw * dt;
@@ -789,12 +741,8 @@ export class JamKartGP {
     k.x += k.vx * dt;
     k.z += k.vz * dt;
 
-    // Body language: lean out of turns, squat under power, dive under braking.
-    k.roll += (clamp(-yaw * vf * 0.004 - vl * 0.02, -0.18, 0.18) - k.roll) * Math.min(dt * 6, 1);
-    const pitchTarget = ctl.brake && live ? 0.05 : live && vf < maxV - 2 ? -0.035 : 0;
-    k.pitch += (pitchTarget - k.pitch) * Math.min(dt * 5, 1);
-
-    // Rails: kill the speed going into the wall and slide along it.
+    // Barriers: bounce off them (some speed lost on a hard hit) and get
+    // turned back along the track.
     let loc = locate(this.track, k.x, k.z, k.idx);
     // A hard shove can carry a kart past the local search; find it again.
     if (Math.abs(loc.lat) > TRACK_W) loc = locate(this.track, k.x, k.z);
@@ -810,40 +758,44 @@ export class JamKartGP {
       k.lat = s * EDGE;
       const into = k.vx * nx + k.vz * nz;
       if (into > 0) {
-        k.vx -= nx * into * 1.3;
-        k.vz -= nz * into * 1.3;
-      }
-      const speed = Math.hypot(k.vx, k.vz);
-      if (speed > 18) {
-        k.vx *= 1 - 0.9 * dt;
-        k.vz *= 1 - 0.9 * dt;
+        k.vx -= nx * into * 1.45;
+        k.vz -= nz * into * 1.45;
+        if (into > 5) {
+          k.vx *= 0.88;
+          k.vz *= 0.88;
+          k.susp.vy -= into * 0.12;
+          k.susp.rv += s * into * 0.05;
+          this.#spark(k.x + nx * 1.2, k.y + 0.6, k.z + nz * 1.2, 0xffc060, 8, 7);
+          if (k.human && live && k.scrapeT <= 0) kartSfx.bump();
+          k.scrapeT = 0.25;
+        }
       }
       const trackH = Math.atan2(tan[k.idx].x, tan[k.idx].y);
       const off = wrapAngle(k.h - trackH);
-      if (Math.abs(off) < Math.PI / 2) k.h -= off * Math.min(dt * 3, 1);
-      if (speed > 10 && Math.random() < 0.6) this.#spark(k.x + nx * 1.2, k.y + 0.5, k.z + nz * 1.2, 0xffc060, 2, 7);
-      if (k.scrapeT <= 0 && k.human && live && speed > 10) kartSfx.scrape();
-      k.scrapeT = 0.15;
+      if (Math.abs(off) < Math.PI / 2) k.h -= off * Math.min(dt * 5, 1);
     }
 
-    // Height: stick to the road unless it drops away faster than gravity can
-    // follow (the ramp lip), then fly until you land.
+    // Height: karts stay planted on the tarmac, kerbs and verges.
     const ground = groundAt(this.track, k.idx, k.x, k.z, k.lat);
-    if (k.air) {
-      k.vy -= GRAVITY * dt;
-      k.y += k.vy * dt;
-      k.airT += dt;
-      if (k.y <= ground) this.#land(k, ground);
-    } else {
-      // A road circuit has no jumps: karts stay planted on the tarmac and
-      // verges (running wide used to throw them off the verge's slope).
-      k.vy = dt > 0 ? clamp((ground - k.y) / dt, -40, 40) : 0;
-      k.y = ground;
-    }
+    const vy = dt > 0 ? clamp((ground - k.y) / dt, -40, 40) : 0;
+    k.vy = vy;
+    k.y = ground;
+    // The body feels the road's rise and fall smoothed (the road is built
+    // from short straight pieces, so raw changes come in tiny steps).
+    const vyS = (k.vyS ?? 0) + (vy - (k.vyS ?? 0)) * Math.min(dt * 10, 1);
+    const groundAccel = dt > 0 ? (vyS - (k.vyS ?? 0)) / dt : 0;
+    k.vyS = vyS;
     const bank = this.track.bank[k.idx] * along;
-    const pitchTo = k.air ? -Math.atan(k.vy / Math.max(Math.abs(vf), 10)) * 0.7 : -Math.atan(slope);
-    k.groundPitch += (pitchTo - k.groundPitch) * Math.min(dt * 8, 1);
+    k.groundPitch += (-Math.atan(slope) - k.groundPitch) * Math.min(dt * 8, 1);
     k.groundRoll += (-Math.atan(bank) - k.groundRoll) * Math.min(dt * 8, 1);
+
+    this.#suspension(k, dt, live, {
+      groundAccel,
+      longAccel: dt > 0 ? (vf - vfIn) / dt : 0,
+      latAccel: vf * yaw,
+      kerb: Math.abs(k.lat) > TRACK_W / 2 - 1.2 && Math.abs(k.lat) < TRACK_W / 2 && Math.abs(this.track.curv[k.idx]) > 0.012,
+      offRoad,
+    });
 
     // Laps: crossing the line forwards counts, backwards un-counts.
     if (k.lastIdx > SAMPLES * 0.85 && k.idx < SAMPLES * 0.15) this.#crossLine(k);
@@ -853,6 +805,28 @@ export class JamKartGP {
 
     const trackH = Math.atan2(tan[k.idx].x, tan[k.idx].y);
     k.wrongT = Math.abs(wrapAngle(k.h - trackH)) > 2 && vf > 2 ? k.wrongT + dt : 0;
+  }
+
+  // Spring-damper suspension for the body: it heaves over crests and dips,
+  // squats when accelerating, dives under braking, rolls in corners, and
+  // rattles over kerbs and grass. Heavier karts sit softer and slower.
+  #suspension(k, dt, live, { groundAccel, longAccel, latAccel, kerb, offRoad }) {
+    if (dt <= 0) return;
+    const s = k.susp;
+    const m = k.spec.mass;
+    const speed = Math.abs(k.v);
+    // Heave: the body lags the wheels when the ground pushes up or drops.
+    let force = -SUSP.k / m * s.y - SUSP.c / Math.sqrt(m) * s.vy - groundAccel * 0.35;
+    if (live && kerb) force += (Math.random() - 0.5) * speed * 16;
+    if (live && offRoad) force += (Math.random() - 0.5) * speed * 7;
+    s.vy += force * dt;
+    s.y = clamp(s.y + s.vy * dt, -0.15, 0.15);
+    // Pitch: nose dips under braking, lifts under power.
+    s.pv += (-SUSP.kp / m * s.pitch - SUSP.cp * s.pv - longAccel * 0.16) * dt;
+    s.pitch = clamp(s.pitch + s.pv * dt, -0.12, 0.12);
+    // Roll: the body leans out of the corner.
+    s.rv += (-SUSP.kr / m * s.roll - SUSP.cr * s.rv - latAccel * 0.2) * dt;
+    s.roll = clamp(s.roll + s.rv * dt, -0.16, 0.16);
   }
 
   #land(k, ground) {
@@ -1179,11 +1153,11 @@ export class JamKartGP {
     p.group.position.set(k.x, k.y, k.z);
     p.group.rotation.x = k.groundPitch;
     p.group.rotation.z = k.groundRoll;
-    // Drifting karts point into the slide.
-    p.group.rotation.y = k.h + k.spinA + clamp(-k.vl * 0.04, -0.4, 0.4);
-    p.body.rotation.z = k.roll;
-    p.body.rotation.x = k.pitch;
-    p.body.position.y = Math.sin(((k.hopT ?? 0) / 0.22) * Math.PI) * 0.25;
+    p.group.rotation.y = k.h + k.spinA + clamp(-k.vl * 0.04, -0.2, 0.2);
+    // The body rides on its suspension; the wheels stay on the ground.
+    p.body.position.y = k.susp.y;
+    p.body.rotation.x = k.susp.pitch;
+    p.body.rotation.z = k.susp.roll;
     for (const w of p.wheels) w.rotation.x += (k.v * dt) / 0.5;
     k.squash += ((k.boostT > 0 ? 0.72 : 1) - k.squash) * Math.min(dt * 10, 1);
     p.group.scale.set(1 / Math.sqrt(k.squash), 1, k.squash);
@@ -1266,9 +1240,6 @@ export class JamKartGP {
       h.slot2.style.display = (k.spec.slots ?? 1) > 1 ? '' : 'none';
       h.static.classList.toggle('on', k.jamT > 0 || k.emiT > 0);
       h.static.classList.toggle('light', k.jamT <= 0 && k.emiT > 0);
-      h.drift.classList.toggle('on', k.driftCharge > 0);
-      h.drift.classList.toggle('hot', k.driftCharge > 1.6);
-      h.drift.firstElementChild.style.width = `${clamp(k.driftCharge / 1.6, 0, 1) * 100}%`;
       if (h.cardT > 0 && (h.cardT -= dt) <= 0) h.card.classList.remove('show');
       if (h.bigT > 0 && (h.bigT -= dt) <= 0) h.big.classList.remove('show');
       if (!k.finished && k.wrongT > 1 && h.bigT <= 0) this.#big(k, 'WRONG WAY ↺', 'bad', 0.3);
@@ -1298,8 +1269,8 @@ export class JamKartGP {
         if (this.engines[i]) this.engines[i].model = k.spec.id;
       }
       this.engines[i]?.update({
-        speed: k.v, top: k.spec.top, slip: k.vl, drifting: !!k.driftDir, boost: k.boostT > 0,
-        air: k.air && !k.driftDir, jammed: k.jamT > 0, on: true,
+        speed: k.v, top: k.spec.top, slip: k.vl, drifting: false, boost: k.boostT > 0,
+        air: false, jammed: k.jamT > 0, on: true,
       });
     });
   }

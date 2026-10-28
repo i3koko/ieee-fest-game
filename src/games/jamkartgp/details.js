@@ -9,8 +9,14 @@ import { TRACK_W, SAMPLES, HAZARDS, sampleAt, surfaceY, vergeY, locate, canvasTe
 const PROPS = ['grandstand', 'pits', 'start', 'bridge', 'camera', 'dish'];
 const props = {};
 
+// The official IEEE ComSoc logo (white), used on banners and billboards.
+let comsocLogo = null;
+
 export async function loadProps() {
   const loader = new GLTFLoader();
+  const logo = new Image();
+  logo.src = `${import.meta.env.BASE_URL}brand/comsoc-white.png`;
+  await logo.decode().then(() => (comsocLogo = logo)).catch(() => console.warn('Jam Kart GP: ComSoc logo missing'));
   await Promise.all(
     PROPS.map(async (name) => {
       try {
@@ -22,7 +28,9 @@ export async function loadProps() {
   );
 }
 
+// 'LOGO' panels show the ComSoc logo on IEEE blue.
 const SPONSORS = [
+  ['LOGO', '', '#00629b', '#ffffff'],
   ['IEEE', 'ComSoc AUS', '#00629b', '#ffffff'],
   ['IEEE FEST', '2026', '#111418', '#ff4a3d'],
   ['5G NR', 'faster than your kart', '#ffffff', '#00629b'],
@@ -33,17 +41,49 @@ const SPONSORS = [
   ['AUS', 'IEEE Student Branch', '#8a1538', '#ffffff'],
 ];
 
-function sponsorTexture([title, sub, bg, fg], w = 1024, h = 256) {
+// Draws one sponsor into a w x h panel at (x, 0), never stretched: text is
+// sized to fit, and the logo keeps its proportions.
+function drawSponsor(g, [title, sub, bg, fg], x, w, h) {
+  g.fillStyle = bg;
+  g.fillRect(x, 0, w, h);
+  if (title === 'LOGO' && comsocLogo) {
+    const scale = Math.min((w * 0.82) / comsocLogo.width, (h * 0.8) / comsocLogo.height);
+    const lw = comsocLogo.width * scale;
+    const lh = comsocLogo.height * scale;
+    g.drawImage(comsocLogo, x + (w - lw) / 2, (h - lh) / 2, lw, lh);
+    return;
+  }
+  const label = title === 'LOGO' ? 'IEEE ComSoc' : title;
+  g.fillStyle = fg;
+  g.textAlign = 'center';
+  g.textBaseline = 'middle';
+  const fit = (text, size, weight, maxW) => {
+    g.font = `${weight} ${size}px "Arial Black", Arial, sans-serif`;
+    const k = Math.min(1, maxW / Math.max(g.measureText(text).width, 1));
+    g.font = `${weight} ${size * k}px "Arial Black", Arial, sans-serif`;
+  };
+  fit(label, h * (sub ? 0.46 : 0.6), 900, w * 0.86);
+  g.fillText(label, x + w / 2, sub ? h * 0.42 : h * 0.52);
+  if (sub) {
+    fit(sub, h * 0.17, 700, w * 0.86);
+    g.fillText(sub, x + w / 2, h * 0.8);
+  }
+}
+
+// Artwork for a banner of the given width/height ratio: as many ~4:1
+// sponsor panels as fit side by side, so nothing gets squished.
+function sponsorTexture(start, aspect) {
+  const h = Math.min(256, Math.floor(4096 / aspect));
+  const w = Math.round(h * aspect);
+  const panels = Math.max(1, Math.round(aspect / 4));
   return canvasTexture(w, h, (g) => {
-    g.fillStyle = bg;
-    g.fillRect(0, 0, w, h);
-    g.fillStyle = fg;
-    g.textAlign = 'center';
-    g.textBaseline = 'middle';
-    g.font = `900 ${h * 0.46}px "Arial Black", Arial, sans-serif`;
-    g.fillText(title, w / 2, h * 0.42);
-    g.font = `700 ${h * 0.17}px Arial, sans-serif`;
-    g.fillText(sub, w / 2, h * 0.8);
+    for (let n = 0; n < panels; n++) {
+      const x0 = Math.round((n * w) / panels);
+      const x1 = Math.round(((n + 1) * w) / panels);
+      drawSponsor(g, SPONSORS[(start + n) % SPONSORS.length], x0, x1 - x0, h);
+      g.fillStyle = 'rgba(0,0,0,0.6)';
+      g.fillRect(x1 - 2, 0, 4, h);
+    }
   });
 }
 
@@ -285,7 +325,12 @@ function bannerize(obj, sponsorIdx) {
   let n = sponsorIdx;
   obj.traverse((o) => {
     if (o.isMesh && /^Banner/.test(o.name)) {
-      const map = sponsorTexture(SPONSORS[n++ % SPONSORS.length]);
+      // Size the artwork to this banner's real proportions.
+      o.geometry.computeBoundingBox();
+      const size = o.geometry.boundingBox.getSize(new THREE.Vector3());
+      const [long, short] = [size.x, size.y, size.z].sort((a, b) => b - a);
+      const map = sponsorTexture(n, long / short);
+      n += Math.max(1, Math.round(long / short / 4));
       // glTF models expect textures the other way up from canvas art.
       map.flipY = false;
       o.material = new THREE.MeshBasicMaterial({ map, color: 0xdddddd });
@@ -415,7 +460,7 @@ function buildBillboards(scene, track, at, heading, terrainY, reserved, rand, fi
     const [x, z] = at(i, lat);
     if (!fits(i, lat, 9, 1, 0.4) || !reserved.every(([px, pz, pr]) => Math.hypot(px - x, pz - z) > pr + 4)) continue;
     const g = new THREE.Group();
-    const board = new THREE.Mesh(new THREE.BoxGeometry(9, 2.2, 0.2), [back, back, back, back, new THREE.MeshBasicMaterial({ map: sponsorTexture(SPONSORS[n % SPONSORS.length]), color: 0xdddddd }), back]);
+    const board = new THREE.Mesh(new THREE.BoxGeometry(9, 2.2, 0.2), [back, back, back, back, new THREE.MeshBasicMaterial({ map: sponsorTexture(n, 9 / 2.2), color: 0xdddddd }), back]);
     board.position.y = 2.6;
     g.add(board);
     for (const lx of [-3.5, 3.5]) {

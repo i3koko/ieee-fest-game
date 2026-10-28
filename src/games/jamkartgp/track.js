@@ -95,7 +95,12 @@ export function vergeY(track, i, lat) {
   if (a <= TRACK_W / 2) return surfaceY(track, i, lat);
   const edge = surfaceY(track, i, Math.sign(lat) * (TRACK_W / 2));
   const t = Math.min((a - TRACK_W / 2) / VERGE, 1);
-  return edge + (track.base[i] - 0.5 - edge) * t;
+  const y = edge + (track.base[i] - 0.5 - edge) * t;
+  // Never below the visible ground, or karts on the grass sink into it.
+  if (!track.terrainY) return y;
+  const p = track.pts[i];
+  const s = track.side[i];
+  return Math.max(y, track.terrainY(p.x + s.x * lat, p.y + s.y * lat) + 0.08);
 }
 
 // Smooth ground height under (x, z), road or verge, blending neighbours.
@@ -301,6 +306,7 @@ function buildTerrain(scene, track) {
     const z = pos.getZ(k) + cz;
     let best = 0;
     let bd = Infinity;
+    let lowest = Infinity; // lowest road ground within reach of this point
     for (let i = 0; i < SAMPLES; i += 2) {
       const p = track.pts[i];
       const d = (p.x - x) ** 2 + (p.y - z) ** 2;
@@ -308,11 +314,14 @@ function buildTerrain(scene, track) {
         bd = d;
         best = i;
       }
+      if (d < (TRACK_W / 2 + 9) ** 2) lowest = Math.min(lowest, track.base[i]);
     }
     const d = Math.sqrt(bd);
     const t = Math.min(Math.max((d - (TRACK_W / 2 + 5)) / 50, 0), 1);
     const ease = t * t * (3 - 2 * t);
-    const h = (track.base[best] - 0.6) * (1 - ease) + Math.max(hills(x, z), track.base[best] - 6) * ease;
+    let h = (track.base[best] - 0.6) * (1 - ease) + Math.max(hills(x, z), track.base[best] - 6) * ease;
+    // Where two parts of the circuit run close, keep the ground under both.
+    h = Math.min(h, lowest - 0.6);
     pos.setY(k, h);
     heights[k] = h;
     uv.setXY(k, x / 18, z / 18);
@@ -343,6 +352,7 @@ function buildTerrain(scene, track) {
 
 export function buildBoard(scene, track) {
   const terrainY = buildTerrain(scene, track);
+  track.terrainY = terrainY;
 
   // Grid slots: where JamKartGP's #placeGrid puts the eight karts.
   const grid = [];

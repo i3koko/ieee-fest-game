@@ -35,10 +35,10 @@ export const MODELS = [
   },
   {
     id: 'laser', name: 'LASER', file: 'kart-laser.glb',
-    blurb: 'A beam of light on wheels: quick and light, but slippery.',
-    perk: 'Drift boosts charge 50% faster',
+    blurb: 'A beam of light on wheels: quick and light, cuts corners over the grass.',
+    perk: 'Loses far less speed on the grass',
     stats: { SPEED: 4, HANDLING: 4, ACCEL: 4, WEIGHT: 1 },
-    top: 30, turn: 2.45, accel: 20, mass: 0.75, grip: 11, boost: 1, recover: 1, jamRange: 1, driftRate: 1.5,
+    top: 30, turn: 2.45, accel: 20, mass: 0.75, grip: 11, boost: 1, recover: 1, jamRange: 1, offroad: 0.85,
   },
 ];
 
@@ -134,6 +134,10 @@ export function makeKart(modelId, color) {
   });
 
   // In daylight the kart casts a soft contact shadow instead of a neon glow.
+  // Wheels hang off the kart itself, not the body, so the body can ride on
+  // its suspension while the wheels stay planted.
+  for (const w of wheels) group.attach(w);
+
   const under = new THREE.Mesh(
     new THREE.PlaneGeometry(3.6, 5.2),
     new THREE.MeshBasicMaterial({ map: glowTexture(), color: 0x000000, transparent: true, opacity: 0.55, depthWrite: false })

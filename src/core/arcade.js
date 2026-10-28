@@ -56,7 +56,7 @@ function template(cfg) {
 
     <div id="title-ui" class="screen">
       <div class="title-shade"></div>
-      <div class="brand">IEEE FEST <span>·</span> ComSoc AUS Student Branch</div>
+      <div class="brand"><img class="brand-logo" src="${import.meta.env.BASE_URL}brand/comsoc-white.png" alt="IEEE ComSoc" onerror="this.remove()" />IEEE FEST <span>·</span> ComSoc AUS Student Branch</div>
       <div class="title-main">
         <div class="logo">
           ${ICONS[cfg.icon ?? cfg.id]}
