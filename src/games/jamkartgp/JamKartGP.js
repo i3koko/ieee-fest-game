@@ -6,6 +6,7 @@ import { TRACK_W, SAMPLES, FOG, buildTrack, buildBoard, locate, ahead, groundAt,
 import { makeKart, MODELS, PALETTE, limitSuspension } from './kart.js';
 import { buildWeather } from './weather.js';
 import { buildAtmosphere } from './atmosphere.js';
+import { createQuality } from './quality.js';
 
 const RACERS = 8;
 const GRAVITY = 30;
@@ -57,7 +58,6 @@ const ITEMS = {
 };
 
 // Rendering quality. Stage 4 makes this automatic; 'high' for now.
-const QUALITY = { shadows: true, rain: 2200 };
 
 // The mid-race weather change explains itself too.
 const RAIN_INFO = {
@@ -130,7 +130,7 @@ export class JamKartGP {
     this.scene.background = new THREE.Color(FOG.color);
     this.scene.fog = new THREE.Fog(FOG.color, FOG.near, FOG.far);
     // Sky, clouds, sun (with shadows), fog and rain.
-    this.weather = buildWeather(this.scene, view.renderer, { shadows: QUALITY.shadows, rainDrops: QUALITY.rain });
+    this.weather = buildWeather(this.scene, view.renderer);
     this.wet = 0;
 
     this.track = buildTrack();
@@ -140,6 +140,9 @@ export class JamKartGP {
     this.#buildSpray();
     // Tyre smoke, skid marks, marshals, the TV helicopter and confetti.
     this.atmo = buildAtmosphere(this.scene, this.track, this.board.terrainY);
+    // Graphics tier: picked automatically from the frame rate (see quality.js).
+    this.quality = createQuality((q) => this.#applyQuality(q));
+    this.#applyQuality(this.quality.settings);
     this.walls = [];
     this.rings = [];
     this.karts = Array.from({ length: RACERS }, (_, i) => this.#makeKart(i));
@@ -156,8 +159,15 @@ export class JamKartGP {
     }
   }
 
-  // The how-to screen's HAZARDS setting.
-  setOptions({ hazards = 'ALL ON' } = {}) {
+  #applyQuality(q) {
+    this.view.setPixelRatio(q.pixelRatio);
+    this.weather.setQuality(q);
+    this.board.setMeadows(q.meadows);
+  }
+
+  // The how-to screen's HAZARDS and GRAPHICS settings.
+  setOptions({ hazards = 'ALL ON', graphics = 'AUTO' } = {}) {
+    this.quality.setMode(graphics);
     const presets = {
       'ALL ON': { rain: true, boost: true, gates: true },
       'NO GATES': { rain: true, boost: true },
@@ -797,6 +807,7 @@ export class JamKartGP {
       this.#updateAudio(live);
     }
     this.view.render();
+    this.quality.sample();
 
     if (!live || this.demo) return null;
     const humans = this.karts.filter((k) => k.human);

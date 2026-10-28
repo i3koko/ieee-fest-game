@@ -156,6 +156,7 @@ export function buildDetails(scene, track, terrainY, reserved) {
     update: (t) => updates.forEach((f) => f(t)),
     setStartLights: lights,
     setWind: scenery.setWind,
+    setMeadows: scenery.setMeadows,
     setSigns: (on) => Object.entries(signs).forEach(([type, list]) => list.forEach((g) => (g.visible = !!on[type]))),
   };
 }

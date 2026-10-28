@@ -107,7 +107,7 @@ export function buildScenery(scene, track, terrainY, { trackDist, free, rand }) 
   const MAP = [-240, 380, -300, 380];
 
   buildForest(scene, terrainY, rand, scatter, near, free, dry, MAP);
-  buildMeadows(scene, terrainY, rand, scatter, near, free, dry);
+  const meadows = buildMeadows(scene, terrainY, rand, scatter, near, free, dry);
   buildRocks(scene, terrainY, rand, scatter, near, free, dry, MAP);
   const lake = buildLake(scene, terrainY, rand);
 
@@ -115,6 +115,13 @@ export function buildScenery(scene, track, terrainY, { trackDist, free, rand }) 
     update(t) {
       wind.uTime.value = t;
       lake.update(t);
+    },
+    // Graphics tier: the share of grass tufts and flowers drawn (0..1).
+    setMeadows(f) {
+      for (const m of meadows) {
+        m.count = Math.floor(m.userData.total * f);
+        m.visible = m.count > 0;
+      }
     },
     setWind(w) {
       wind.uWind.value = w;
@@ -198,7 +205,7 @@ function buildMeadows(scene, terrainY, rand, scatter, near, free, dry) {
   }).map(([x, z]) => ({ x, y: terrainY(x, z) - 0.05, z, s: 0.7 + rand() * 0.7, rot: rand() * 6.28 }));
   const tuftGeo = gradient(bladeTuft(7, 0.9, 0.35, 0.06), 0x2c4a1c, 0x9cbf5a, 0.9);
   const tuftMat = sway(new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 1, side: THREE.DoubleSide }), { amount: 0.08, speed: 2.2 });
-  instances(scene, tuftGeo, tuftMat, tufts);
+  const meshes = [instances(scene, tuftGeo, tuftMat, tufts)];
 
   // Flowers grow in patches: pick patch centres, then sprinkle round them.
   const COLORS = [0xffffff, 0xf5d90a, 0xe8493f, 0xb57edc, 0xffffff, 0xf29fc5];
@@ -232,8 +239,12 @@ function buildMeadows(scene, terrainY, rand, scatter, near, free, dry) {
   COLORS.forEach((hex, n) => {
     if (!flowers[n].length) return;
     const geo = mergeGeometries([paint(stem.clone(), 0x4f8a35), paint(head.clone(), hex), paint(centre.clone(), 0xf2c200)].map((g) => g.toNonIndexed()));
-    instances(scene, geo, flowerMat, flowers[n]);
+    meshes.push(instances(scene, geo, flowerMat, flowers[n]));
   });
+  // The scatter order is random, so drawing only the first part of each
+  // list thins them out evenly.
+  for (const m of meshes) m.userData.total = m.count;
+  return meshes;
 }
 
 // ------------------------------------------------------------------ rocks

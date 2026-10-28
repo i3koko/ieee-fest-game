@@ -61,6 +61,15 @@ export class GameView {
     this.resize();
   }
 
+  // Render resolution as a multiple of CSS pixels (capped by the screen's).
+  setPixelRatio(pr) {
+    const want = Math.min(devicePixelRatio, pr);
+    if (want === this.renderer.getPixelRatio()) return;
+    this.renderer.setPixelRatio(want);
+    this.composer?.setPixelRatio(want);
+    this.resize();
+  }
+
   resize() {
     this.renderer.setSize(innerWidth, innerHeight);
     this.composer?.setSize(innerWidth, innerHeight);

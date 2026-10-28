@@ -468,6 +468,7 @@ export function buildBoard(scene, track) {
       details.setWind(1 + 2.5 * wet);
     },
     setStartLights: details.setStartLights,
+    setMeadows: details.setMeadows,
     setHazards(on) {
       hazards.set(on);
       details.setSigns(on);

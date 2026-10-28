@@ -22,7 +22,10 @@ runArcade({
     ['THE TRACK', 'Wet patches are slippery, green fibre strips boost you, the clock gates open on the beat, and grass slows you down'],
   ],
   modes: ['1 PLAYER · VS CPU', '2 PLAYERS'],
-  options: [{ key: 'hazards', label: 'HAZARDS', choices: ['ALL ON', 'NO GATES', 'BOOST ONLY', 'OFF'] }],
+  options: [
+    { key: 'hazards', label: 'HAZARDS', choices: ['ALL ON', 'NO GATES', 'BOOST ONLY', 'OFF'] },
+    { key: 'graphics', label: 'GRAPHICS', choices: ['AUTO', 'HIGH', 'MEDIUM', 'LOW'] },
+  ],
   endTitle: 'RACE OVER',
   song: 'drive',
   icon: 'jamkart',

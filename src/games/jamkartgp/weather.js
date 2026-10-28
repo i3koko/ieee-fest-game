@@ -10,24 +10,22 @@ const SUN_DIR = new THREE.Vector3(-0.55, 0.42, -0.72).normalize();
 const CLEAR = { fog: new THREE.Color(0xa9c6e4), zenith: new THREE.Color(0x3d7fd6), near: 140, far: 520, sun: 2.1, hemi: 0.65 };
 const STORM = { fog: new THREE.Color(0x7d8791), zenith: new THREE.Color(0x58606c), near: 50, far: 260, sun: 0.5, hemi: 0.6 };
 
-export function buildWeather(scene, renderer, { shadows = true, rainDrops = 2200 } = {}) {
+export function buildWeather(scene, renderer, { rainDrops = 2200 } = {}) {
   // ---------------------------------------------------------------- light
   const hemi = new THREE.HemisphereLight(0xcfe2ff, 0x4a5a32, CLEAR.hemi);
   scene.add(hemi);
   const sun = new THREE.DirectionalLight(0xfff4e6, CLEAR.sun);
-  sun.castShadow = shadows;
-  if (shadows) {
-    renderer.shadowMap.enabled = true;
-    renderer.shadowMap.type = THREE.PCFSoftShadowMap;
-    sun.shadow.mapSize.set(2048, 2048);
-    const c = sun.shadow.camera;
-    c.left = c.bottom = -70;
-    c.right = c.top = 70;
-    c.near = 10;
-    c.far = 320;
-    sun.shadow.bias = -0.0004;
-    sun.shadow.normalBias = 0.5;
-  }
+  renderer.shadowMap.enabled = true;
+  renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+  sun.castShadow = true;
+  sun.shadow.mapSize.set(2048, 2048);
+  const c = sun.shadow.camera;
+  c.left = c.bottom = -70;
+  c.right = c.top = 70;
+  c.near = 10;
+  c.far = 320;
+  sun.shadow.bias = -0.0004;
+  sun.shadow.normalBias = 0.5;
   scene.add(sun, sun.target);
 
   // ---------------------------------------------------------------- sky
@@ -153,7 +151,7 @@ export function buildWeather(scene, renderer, { shadows = true, rainDrops = 2200
   scene.environmentIntensity = 0.55;
 
   // ---------------------------------------------------------------- state
-  const state = { cloud: 0, wet: 0, flash: 0 };
+  const state = { cloud: 0, wet: 0, flash: 0, rain: 1 };
   const lerp = (a, b, t) => a + (b - a) * t;
   return {
     sun,
@@ -163,6 +161,16 @@ export function buildWeather(scene, renderer, { shadows = true, rainDrops = 2200
     },
     get cloud() {
       return state.cloud;
+    },
+    // Graphics tier: shadows on/off and their sharpness, and how much rain.
+    setQuality({ shadows, shadowSize, rain }) {
+      sun.castShadow = shadows;
+      if (sun.shadow.mapSize.x !== shadowSize) {
+        sun.shadow.map?.dispose();
+        sun.shadow.map = null;
+        sun.shadow.mapSize.set(shadowSize, shadowSize);
+      }
+      state.rain = rain;
     },
     // A lightning flash: the whole scene lights up for a moment.
     flash() {
@@ -210,7 +218,7 @@ export function buildWeather(scene, renderer, { shadows = true, rainDrops = 2200
         r.lines.visible = !!f && wet > 0.02;
         if (!r.lines.visible) return;
         r.lines.material.opacity = Math.min(1, wet * 1.2) * 0.55;
-        const shown = Math.floor(r.drops.length * wet);
+        const shown = Math.floor(r.drops.length * wet * state.rain);
         for (let i = 0; i < r.drops.length; i++) {
           const d = r.drops[i];
           d.y -= d.v * dt;
