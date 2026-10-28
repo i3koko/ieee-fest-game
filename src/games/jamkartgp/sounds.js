@@ -1,5 +1,5 @@
 // Jam Kart's own sound design, built on the shared audio context: an engine
-// voice per player that matches their kart, tyre squeal and wind, and the
+// voice per player that matches their kart, tyre squeal, and the
 // race's effects. Wave Rider keeps the simpler shared beeps.
 import { audioOut } from '../../core/audio.js';
 
@@ -147,16 +147,12 @@ export function createEngine(modelId) {
   sub.connect(subG).connect(lp);
   lp.connect(lump).connect(amp).connect(out);
 
-  // Tyres and wind share a noise source through their own filters.
+  // Tyres and the jammer's static share a noise source through their own filters.
   const hiss = noiseLoop();
   const skidF = filt('bandpass', 1800, 6);
   const skid = ac.createGain();
   skid.gain.value = 0;
   hiss.connect(skidF).connect(skid).connect(out);
-  const windF = filt('bandpass', 600, 0.6);
-  const wind = ac.createGain();
-  wind.gain.value = 0;
-  hiss.connect(windF).connect(wind).connect(out);
   const staticF = filt('highpass', 3000, 0.7);
   const stat = ac.createGain();
   stat.gain.value = 0;
@@ -214,7 +210,7 @@ export function createEngine(modelId) {
       } else frac = Math.min(v / top, 1.1);
       frac = Math.max(frac, 0.05) + (boost ? 0.05 : 0);
       // Holding a steady speed, the engine settles back: quieter and
-      // darker, letting the wind take over, so flat out isn't one long
+      // darker, so flat out isn't one long
       // drone. Any acceleration, braking or shift brings it straight back.
       cruiseT = throttle && Math.abs(accel) < 1.5 && frac > 0.5 ? cruiseT + dt : 0;
       const settle = Math.min(Math.max((cruiseT - 0.6) / 1.6, 0), 1);
@@ -241,15 +237,12 @@ export function createEngine(modelId) {
       const squeal = on && !air ? Math.min(Math.max(Math.abs(slip) - 3, 0) / 10, 1) * (drifting ? 1 : 0.6) : 0;
       skid.gain.setTargetAtTime(squeal * 0.05, t, 0.05);
       skidF.frequency.setTargetAtTime(1500 + Math.abs(slip) * 40, t, 0.05);
-      const r = Math.min(v / top, 1.3);
-      wind.gain.setTargetAtTime(on ? Math.max(r - 0.4, 0) * (0.05 + 0.03 * ease) + (air ? 0.03 : 0) : 0, t, 0.1);
-      windF.frequency.setTargetAtTime(400 + r * 900, t, 0.1);
       stat.gain.setTargetAtTime(on && jammed ? 0.06 : 0, t, 0.03);
     },
     stop() {
       const t = now();
       amp.gain.setTargetAtTime(0, t, 0.05);
-      for (const g of [skid, wind, stat]) g.gain.setTargetAtTime(0, t, 0.05);
+      for (const g of [skid, stat]) g.gain.setTargetAtTime(0, t, 0.05);
       setTimeout(() => nodes.forEach((n) => n.stop()), 400);
     },
   };
