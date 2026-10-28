@@ -87,43 +87,65 @@ function burst(dur, { vol = 0.1, type = 'bandpass', freq = 1500, to = freq, q = 
 
 // Engines ------------------------------------------------------------------
 
-// Each kart gets its own engine character. `gears` is how many times the
-// revs climb and drop on the way to top speed (0 = electric, no gears).
+// Each kart has its own engine and gearbox. Frequencies are the engine's
+// note at idle and at the rev limit; `gears` 0 means electric (no gearbox).
+// `tilt` shapes the tone (higher = mellower), `cut` is the filter range
+// from off-throttle to full throttle, `rumble` adds a low lumpy beat, and
+// `pops` lets the quicker karts crackle a little on downshifts.
 const ENGINES = {
-  fiber: { idle: 70, range: 260, gears: 3, wave: 'sawtooth', cutoff: 1800, whine: 4, burble: 0, vol: 0.05 },
-  '5g': { idle: 95, range: 320, gears: 5, wave: 'square', cutoff: 1400, whine: 0, burble: 0, vol: 0.035 },
-  satellite: { idle: 38, range: 110, gears: 4, wave: 'sawtooth', cutoff: 520, whine: 0, burble: 0.5, vol: 0.075 },
-  radio: { idle: 48, range: 150, gears: 4, wave: 'sawtooth', cutoff: 760, whine: 0, burble: 1, vol: 0.065 },
-  laser: { idle: 180, range: 900, gears: 0, wave: 'triangle', cutoff: 3200, whine: 2, burble: 0, vol: 0.045 },
+  fiber: { idle: 58, red: 205, gears: 4, tilt: 1.25, cut: [800, 2400], sub: 0.35, rumble: 0, pops: true, vol: 0.05 },
+  '5g': { idle: 72, red: 255, gears: 5, tilt: 1.35, cut: [750, 2200], sub: 0.3, rumble: 0, pops: true, vol: 0.042 },
+  satellite: { idle: 30, red: 100, gears: 3, tilt: 1.0, cut: [280, 900], sub: 0.7, rumble: 0.25, pops: false, vol: 0.06 },
+  radio: { idle: 40, red: 145, gears: 4, tilt: 1.1, cut: [420, 1300], sub: 0.5, rumble: 0.15, pops: false, vol: 0.06 },
+  laser: { idle: 150, red: 680, gears: 0, tilt: 2.2, cut: [1800, 3600], sub: 0, rumble: 0, pops: false, vol: 0.032 },
 };
+
+// A soft engine tone: harmonics falling away smoothly, odd ones a little
+// stronger. Gentler than a raw sawtooth or square wave.
+const waves = {};
+function engineWave(tilt) {
+  if (waves[tilt]) return waves[tilt];
+  const n = 24;
+  const real = new Float32Array(n);
+  const imag = new Float32Array(n);
+  for (let h = 1; h < n; h++) imag[h] = (h % 2 ? 1.3 : 1) / h ** tilt;
+  return (waves[tilt] = ac.createPeriodicWave(real, imag));
+}
+
+// The top speed of each gear: geometric steps, with top gear running a bit
+// past the kart's top speed so it never sits on the limiter.
+function gearTops(gears, top) {
+  const r = 0.28 ** (1 / (gears - 1));
+  return Array.from({ length: gears }, (_, g) => top * 1.08 * r ** (gears - 1 - g));
+}
 
 export function createEngine(modelId) {
   if (!ensure()) return null;
   const e = ENGINES[modelId] ?? ENGINES.fiber;
-  const main = osc(e.wave, e.idle);
+  const main = osc('sine', e.idle);
+  main.setPeriodicWave(engineWave(e.tilt));
+  // A second voice a hair out of tune thickens it.
+  const thick = osc('sine', e.idle * 1.004);
+  thick.setPeriodicWave(engineWave(e.tilt));
+  const thickG = ac.createGain();
+  thickG.gain.value = 0.45;
   const sub = osc('sine', e.idle / 2);
-  const lp = filt('lowpass', e.cutoff, 3);
+  const subG = ac.createGain();
+  subG.gain.value = e.sub;
+  const lp = filt('lowpass', e.cut[0], 0.7);
   const amp = ac.createGain();
   amp.gain.value = 0;
-  // V8-style burble: a tremolo tied to the revs.
-  const trem = ac.createGain();
-  trem.gain.value = 1;
-  const lfo = osc('sine', 12);
+  // Low lumpy beat for the big lazy engines.
+  const lump = ac.createGain();
+  lump.gain.value = 1;
+  const lfo = osc('sine', 8);
   const lfoDepth = ac.createGain();
-  lfoDepth.gain.value = e.burble * 0.5;
-  lfo.connect(lfoDepth).connect(trem.gain);
+  lfoDepth.gain.value = e.rumble;
+  lfo.connect(lfoDepth).connect(lump.gain);
   main.connect(lp);
-  sub.connect(lp);
-  lp.connect(trem).connect(amp).connect(out);
-
-  // Turbine / electric whine on top.
-  let whine = null;
-  if (e.whine) {
-    whine = osc('sine', e.idle * e.whine);
-    const wg = ac.createGain();
-    wg.gain.value = 0.25;
-    whine.connect(wg).connect(amp);
-  }
+  thick.connect(thickG).connect(lp);
+  sub.connect(subG).connect(lp);
+  lp.connect(lump).connect(amp).connect(out);
 
   // Tyres and wind share a noise source through their own filters.
   const hiss = noiseLoop();
@@ -140,28 +162,78 @@ export function createEngine(modelId) {
   stat.gain.value = 0;
   hiss.connect(staticF).connect(stat).connect(out);
 
-  const nodes = [main, sub, lfo, hiss, whine].filter(Boolean);
+  const nodes = [main, thick, sub, lfo, hiss];
+  // Gearbox state.
+  let tops = null;
+  let gear = 0;
+  let lastT = now();
+  let lastSpeed = 0;
+  let load = 0;
+  let cutUntil = 0; // throttle cut during an upshift
+  let wasOn = false;
+
+  // A few soft exhaust pops (quicker karts only, and not every time).
+  const pop = (chance) => {
+    if (!e.pops || Math.random() > chance) return;
+    const n = 1 + Math.floor(Math.random() * 3);
+    for (let i = 0; i < n; i++) {
+      burst(0.05 + Math.random() * 0.04, { vol: 0.045 + Math.random() * 0.03, type: 'lowpass', freq: 900 + Math.random() * 700, to: 200, when: 0.04 + i * (0.06 + Math.random() * 0.07) });
+    }
+  };
+
   return {
-    // speed in m/s, top = kart's top speed, slip = sideways slide (m/s).
-    update({ speed, top, slip, drifting, boost, air, jammed, on }) {
+    // speed in m/s, top = kart's top speed, slip = sideways slide (m/s),
+    // brake/spin: off the throttle.
+    update({ speed, top, slip, drifting, boost, air, jammed, on, brake = false, spin = false }) {
       const t = now();
-      const r = Math.min(Math.abs(speed) / top, 1.3);
-      let rev;
+      const dt = Math.max(t - lastT, 1e-3);
+      lastT = t;
+      const v = Math.abs(speed);
+      const accel = (v - lastSpeed) / dt;
+      lastSpeed = v;
+      // How hard the engine is working: pulling away hard is full load,
+      // holding top speed is light, braking or spinning is none.
+      const throttle = on && !brake && !spin;
+      const want = throttle ? Math.min(Math.max(accel / 6, 0.15), 1) : 0;
+      load += (want - load) * Math.min(dt * 6, 1);
+
+      let frac; // 0 idle .. 1 rev limit
       if (e.gears) {
-        // Climb through each gear, then drop back when it shifts up.
-        const g = Math.min(Math.floor(r * e.gears), e.gears - 1);
-        const inGear = r * e.gears - g;
-        rev = 0.25 + inGear * 0.6 + g * 0.06;
-      } else rev = r;
-      const f = e.idle + e.range * rev + (boost ? e.range * 0.25 : 0) + (air ? e.range * 0.3 : 0);
-      main.frequency.setTargetAtTime(f, t, 0.04);
-      sub.frequency.setTargetAtTime(f / 2, t, 0.04);
-      if (whine) whine.frequency.setTargetAtTime(f * e.whine, t, 0.05);
-      lfo.frequency.setTargetAtTime(6 + rev * 20, t, 0.05);
-      amp.gain.setTargetAtTime(on ? e.vol * (0.55 + r * 0.6) : 0, t, 0.08);
+        tops ??= gearTops(e.gears, top);
+        // Up a gear near the limit (with a throttle cut), down a gear when
+        // the one below would still be comfortably under it.
+        if (gear < e.gears - 1 && v / tops[gear] > 0.93) {
+          gear++;
+          cutUntil = t + 0.09;
+        } else if (gear > 0 && v / tops[gear - 1] < 0.72) {
+          gear--;
+          pop(brake ? 0.35 : 0.1);
+        }
+        frac = Math.min(v / tops[gear], 1);
+      } else frac = Math.min(v / top, 1.1);
+      frac = Math.max(frac, 0.05) + (boost ? 0.05 : 0);
+      // A slight wander so holding a speed isn't one flat drone.
+      const wander = 1 + 0.006 * Math.sin(t * 1.7) + 0.004 * Math.sin(t * 4.3 + 1);
+      const f = (e.idle + (e.red - e.idle) * frac) * wander;
+      const cut = t < cutUntil;
+
+      // Pitch slides quickly through a shift; the tone opens up with load.
+      main.frequency.setTargetAtTime(f, t, 0.035);
+      thick.frequency.setTargetAtTime(f * 1.004, t, 0.035);
+      sub.frequency.setTargetAtTime(f / 2, t, 0.035);
+      lfo.frequency.setTargetAtTime(Math.max(4, f / 6), t, 0.05);
+      const bright = cut ? 0 : load;
+      lp.frequency.setTargetAtTime(e.cut[0] + (e.cut[1] - e.cut[0]) * (0.25 * frac + 0.75 * bright), t, 0.05);
+      const level = on ? e.vol * (0.5 + 0.3 * frac + 0.35 * load) * (cut ? 0.45 : 1) : 0;
+      amp.gain.setTargetAtTime(level, t, cut ? 0.015 : 0.06);
+      // Lifting off at high revs can crackle too.
+      if (wasOn && !throttle && frac > 0.6) pop(0.25);
+      wasOn = throttle;
+
       const squeal = on && !air ? Math.min(Math.max(Math.abs(slip) - 3, 0) / 10, 1) * (drifting ? 1 : 0.6) : 0;
       skid.gain.setTargetAtTime(squeal * 0.05, t, 0.05);
       skidF.frequency.setTargetAtTime(1500 + Math.abs(slip) * 40, t, 0.05);
+      const r = Math.min(v / top, 1.3);
       wind.gain.setTargetAtTime(on ? Math.max(r - 0.4, 0) * 0.05 + (air ? 0.03 : 0) : 0, t, 0.1);
       windF.frequency.setTargetAtTime(400 + r * 900, t, 0.1);
       stat.gain.setTargetAtTime(on && jammed ? 0.06 : 0, t, 0.03);

@@ -1430,7 +1430,7 @@ export class JamKartGP {
       }
       this.engines[i]?.update({
         speed: k.v, top: k.spec.top, slip: k.vl, drifting: false, boost: k.boostT > 0,
-        air: false, jammed: k.jamT > 0, on: true,
+        air: false, jammed: k.jamT > 0, on: true, brake: !!k.wasBraking, spin: k.spinT > 0,
       });
     });
   }
