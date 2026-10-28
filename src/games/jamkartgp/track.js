@@ -317,6 +317,16 @@ function grassTexture() {
 
 let terrainGrass;
 
+// A lake in the valley south of the back straight. The terrain is carved
+// into a bowl under it and details/scenery add the water, reeds and jetty.
+export const LAKE = { x: 92, z: -150, r: 26, level: 0 };
+// Signed distance (m) from the lake's wavy shoreline; negative is in the water.
+export function lakeEdge(x, z) {
+  const a = Math.atan2(z - LAKE.z, x - LAKE.x);
+  const r = LAKE.r * (1 + 0.16 * Math.sin(2 * a + 1) + 0.09 * Math.sin(3 * a + 2.2) + 0.05 * Math.sin(5 * a));
+  return Math.hypot(x - LAKE.x, z - LAKE.z) - r;
+}
+
 // Rolling hills that hug the circuit: near the road the ground sits just
 // under the tarmac, further out it eases into gentle forested hills.
 function buildTerrain(scene, track) {
@@ -355,6 +365,21 @@ function buildTerrain(scene, track) {
     pos.setY(k, h);
     heights[k] = h;
     uv.setXY(k, x / 18, z / 18);
+  }
+  // The lake: its level sits just under the lowest ground round its shore,
+  // then the bowl is dug out below that, sloping up into the banks.
+  let level = Infinity;
+  for (let k = 0; k < pos.count; k++) {
+    const e = lakeEdge(pos.getX(k) + cx, pos.getZ(k) + cz);
+    if (e >= 0 && e < 10) level = Math.min(level, heights[k]);
+  }
+  LAKE.level = level - 0.3;
+  for (let k = 0; k < pos.count; k++) {
+    const e = lakeEdge(pos.getX(k) + cx, pos.getZ(k) + cz);
+    if (e > 14) continue;
+    const h = Math.min(heights[k], LAKE.level + Math.max(e * 0.28, -2.6));
+    pos.setY(k, h);
+    heights[k] = h;
   }
   geo.computeVertexNormals();
   const tex = grassTexture();
@@ -427,7 +452,7 @@ export function buildBoard(scene, track) {
     scene.add(verge);
   }
 
-  const reserved = [];
+  const reserved = [[LAKE.x, LAKE.z, LAKE.r * 1.3]];
   const hazards = buildHazards(scene, track, reserved);
   const details = buildDetails(scene, track, terrainY, reserved);
 
@@ -440,6 +465,7 @@ export function buildBoard(scene, track) {
       roadUniforms.uWet.value = wet;
       roadMat.roughness = 0.9 - 0.7 * wet;
       roadMat.envMapIntensity = 0.4 + 1.1 * wet;
+      details.setWind(1 + 2.5 * wet);
     },
     setStartLights: details.setStartLights,
     setHazards(on) {

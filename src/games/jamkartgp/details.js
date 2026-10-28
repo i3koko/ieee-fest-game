@@ -1,9 +1,10 @@
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+import { buildScenery } from './scenery.js';
 import { TRACK_W, SAMPLES, HAZARDS, sampleAt, surfaceY, vergeY, locate, canvasTexture, rng, strip, bandStrip, vergeLats } from './track.js';
 
 // Everything around the GP circuit that makes it a racetrack: sky, kerbs,
-// gravel traps, armco, forest, grandstands with a crowd, the pit building,
+// gravel traps, armco, grandstands with a crowd, the pit building,
 // start lights, a bridge, billboards, TV towers and comms kit (dishes and a
 // cell tower). The buildings are Blender models from tools/build_track_props.py.
 const PROPS = ['grandstand', 'pits', 'start', 'bridge', 'camera', 'dish'];
@@ -148,12 +149,13 @@ export function buildDetails(scene, track, terrainY, reserved) {
   buildCameraTowers(scene, track, place, reserved, at, fits);
   buildComms(scene, track, at, terrainY, reserved, updates);
   const signs = buildSigns(scene, track, at, heading, terrainY);
-  buildForest(scene, terrainY, trackDist, free, rand);
+  const scenery = buildScenery(scene, track, terrainY, { trackDist, free, rand });
 
-  updates.push((t) => crowd(t));
+  updates.push((t) => crowd(t), (t) => scenery.update(t));
   return {
     update: (t) => updates.forEach((f) => f(t)),
     setStartLights: lights,
+    setWind: scenery.setWind,
     setSigns: (on) => Object.entries(signs).forEach(([type, list]) => list.forEach((g) => (g.visible = !!on[type]))),
   };
 }
@@ -546,44 +548,4 @@ function buildSigns(scene, track, at, heading, terrainY) {
     }
   }
   return signs;
-}
-
-// ------------------------------------------------------------------ forest
-
-// Dense Ardennes-style pine forest on the hills, with a few broadleaf trees.
-function buildForest(scene, terrainY, trackDist, free, rand) {
-  const spots = [];
-  for (let n = 0; n < 9000 && spots.length < 1600; n++) {
-    const x = -240 + rand() * 620;
-    const z = -300 + rand() * 680;
-    const d = trackDist(x, z);
-    if (d < TRACK_W / 2 + 16 || !free(x, z, 4)) continue;
-    // Thin out the trees near the track so the run-off stays open.
-    if (d < 40 && rand() < 0.6) continue;
-    spots.push([x, z, 0.8 + rand() * 0.9, rand() < 0.16]);
-  }
-  const trunkGeo = new THREE.CylinderGeometry(0.25, 0.35, 3, 6).translate(0, 1.5, 0);
-  const coneGeo = new THREE.ConeGeometry(2.6, 6.5, 8).translate(0, 5.5, 0);
-  const coneGeo2 = new THREE.ConeGeometry(1.8, 4.5, 8).translate(0, 8.5, 0);
-  const ballGeo = new THREE.IcosahedronGeometry(3, 0).translate(0, 5, 0);
-  const pines = spots.filter((s) => !s[3]);
-  const broad = spots.filter((s) => s[3]);
-  const mk = (geo, color, list) => {
-    const mesh = new THREE.InstancedMesh(geo, new THREE.MeshStandardMaterial({ color, roughness: 0.9, flatShading: true }), list.length);
-    mesh.castShadow = true;
-    const m = new THREE.Matrix4();
-    const q = new THREE.Quaternion();
-    const c = new THREE.Color();
-    list.forEach(([x, z, s], n) => {
-      q.setFromAxisAngle(new THREE.Vector3(0, 1, 0), (x * 13.7 + z) % 6.28);
-      m.compose(new THREE.Vector3(x, terrainY(x, z) - 0.2, z), q, new THREE.Vector3(s, s * (0.9 + ((x * 7) % 1) * 0.3), s));
-      mesh.setMatrixAt(n, m);
-      mesh.setColorAt(n, c.setHex(color).multiplyScalar(0.75 + ((z * 3.1) % 1) * 0.4));
-    });
-    scene.add(mesh);
-  };
-  mk(trunkGeo, 0x5a3c22, spots);
-  mk(coneGeo, 0x2f6b34, pines);
-  mk(coneGeo2, 0x3a7d3c, pines);
-  mk(ballGeo, 0x5a9a3c, broad);
 }
