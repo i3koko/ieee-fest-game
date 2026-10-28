@@ -50,6 +50,8 @@ export function buildAtmosphere(scene, track, terrainY) {
     confetti: (amount) => confetti.burst(amount),
     // Starts (or steps up) the fireworks show: 1 for a player's win.
     fireworks: (amount) => fireworks.start(amount),
+    // No more launches; what's in the air burns out.
+    stopFireworks: () => fireworks.stop(),
     // Called with (distance) each time a shell bursts, for the sound.
     set onFirework(fn) {
       fireworks.onBurst = fn;
@@ -500,18 +502,29 @@ function buildFireworks(scene, track) {
   let salvo = 0; // rockets still to fire straight away
   const show = { onBurst: null };
 
-  // Somewhere off to the side of the track, 70-130 m ahead of a camera.
+  // How close (x, z) comes to any part of the circuit.
+  const clearance = (x, z) => {
+    let best = Infinity;
+    for (let i = 0; i < SAMPLES; i += 2) best = Math.min(best, (track.pts[i].x - x) ** 2 + (track.pts[i].y - z) ** 2);
+    return Math.sqrt(best);
+  };
+  // Somewhere off to the side of the track, 70-130 m ahead of a camera,
+  // and well clear of every part of the circuit (it loops back on itself).
   const site = (watch) => {
     const k = watch[Math.floor(Math.random() * watch.length)];
     if (!k) return null;
     const step = track.length / SAMPLES;
-    const i = (k.idx + Math.floor((70 + Math.random() * 60) / step)) % SAMPLES;
-    const side = Math.random() < 0.5 ? -1 : 1;
-    const lat = side * (TRACK_W / 2 + 14 + Math.random() * 30);
-    const p = track.pts[i];
-    const x = p.x + track.side[i].x * lat;
-    const z = p.y + track.side[i].y * lat;
-    return { x, z, y: track.terrainY ? track.terrainY(x, z) : surfaceY(track, i, 0), from: k };
+    for (let tries = 0; tries < 12; tries++) {
+      const i = (k.idx + Math.floor((70 + Math.random() * 60) / step)) % SAMPLES;
+      const side = Math.random() < 0.5 ? -1 : 1;
+      const lat = side * (TRACK_W / 2 + 14 + Math.random() * 30);
+      const p = track.pts[i];
+      const x = p.x + track.side[i].x * lat;
+      const z = p.y + track.side[i].y * lat;
+      if (clearance(x, z) < TRACK_W / 2 + 12) continue;
+      return { x, z, y: track.terrainY ? track.terrainY(x, z) : surfaceY(track, i, 0), from: k };
+    }
+    return null;
   };
 
   const launch = (watch) => {
@@ -620,6 +633,11 @@ function buildFireworks(scene, track) {
     }
     geo.attributes.position.needsUpdate = true;
     geo.attributes.color.needsUpdate = true;
+  };
+
+  show.stop = () => {
+    rate = 0;
+    salvo = 0;
   };
 
   show.clear = () => {

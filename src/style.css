@@ -293,6 +293,15 @@ body {
   justify-content: center;
   background: rgba(0, 0, 0, 0.55);
 }
+/* The results card lets the game show through behind it. */
+#results {
+  background: rgba(0, 0, 0, 0.12);
+}
+#results .panel {
+  background: rgba(6, 8, 16, 0.55);
+  backdrop-filter: blur(5px);
+  -webkit-backdrop-filter: blur(5px);
+}
 .panel {
   width: min(920px, 92vw);
   max-height: 94vh;

@@ -3,7 +3,7 @@ import { Input } from './input.js';
 import { GameView } from './GameView.js';
 import { sfx, setMuted } from './audio.js';
 import { music } from './music.js';
-import { getScores, qualifies, addScore, clearScores, entriesCsv } from './leaderboard.js';
+import { getScores, qualifies, rankFor, addScore, clearScores, entriesCsv } from './leaderboard.js';
 
 const BOARD_EVERY = 14; // idle seconds on the title before showing the top 10
 const BOARD_FOR = 7;
@@ -107,7 +107,7 @@ function template(cfg) {
         <table class="stats" id="results-stats"></table>
         <div class="fact"><span>DID YOU KNOW?</span><p id="results-fact"></p></div>
         <form id="entry" class="entry hidden" autocomplete="off">
-          <div class="label">NEW HIGH SCORE! SIGN THE BOARD</div>
+          <div class="label" id="entry-label"></div>
           <div class="fields">
             <label class="name"><span>NAME</span><input id="entry-name" maxlength="18" spellcheck="false" placeholder="Your name" /></label>
             <label><span>ID</span><input id="entry-id" maxlength="12" spellcheck="false" placeholder="Student ID" /></label>
@@ -275,6 +275,12 @@ export function runArcade(cfg) {
     $('results-fact').textContent = r.fact;
     const signing = qualifies(cfg.id, r.score);
     entry = signing ? { idle: 0 } : null;
+    // Only the very best score is a high score; anything else that makes the
+    // board says where it would go.
+    if (signing) {
+      const rank = rankFor(cfg.id, r.score);
+      $('entry-label').textContent = rank === 0 ? 'NEW HIGH SCORE! SIGN THE BOARD' : `YOU'RE #${rank + 1} ON THE TOP 10! SIGN THE BOARD`;
+    }
     show('entry', signing);
     show('results-continue', !signing);
     $('results').classList.toggle('signing', signing);
@@ -450,7 +456,9 @@ export function runArcade(cfg) {
         break;
       }
       case 'results':
-        view.render();
+        // A game can keep playing behind the card (GP's victory lap).
+        if (game.backdrop) game.backdrop(dt);
+        else view.render();
         if (entry) {
           // Walked away: keep the score if they at least typed a name.
           entry.idle += dt;
@@ -461,7 +469,8 @@ export function runArcade(cfg) {
         }
         break;
       case 'board':
-        view.render();
+        if (game.backdrop) game.backdrop(dt);
+        else view.render();
         if ((input.pressed('start') && stateTime > 0.8) || stateTime > SCREEN_TIMEOUT) startDemo();
         break;
     }

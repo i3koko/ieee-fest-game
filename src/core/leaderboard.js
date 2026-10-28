@@ -24,6 +24,11 @@ export function getScores(game) {
   return load(keyFor(game));
 }
 
+// The place (0-based) a score would take on the board.
+export function rankFor(game, score) {
+  return getScores(game).filter((s) => s.score >= score).length;
+}
+
 export function qualifies(game, score) {
   if (score <= 0) return false;
   const scores = getScores(game);

@@ -771,11 +771,11 @@ export class JamKartGP {
 
     for (const k of this.karts) {
       let ctl = { steer: 0, brake: false, fire: false };
-      if (live) ctl = k.human && !k.finished ? this.#controls(k) : this.#cpu(k, dt, k.finished ? 0.6 : 1);
+      if (live) ctl = k.human && !k.finished && !this.over ? this.#controls(k) : this.#cpu(k, dt, k.finished ? 0.6 : 1);
       if (k.human && !k.finished) k.maxV = k.spec.top;
       this.#drive(k, ctl, dt, live);
       if (live) this.#gates(k);
-      if (ctl.fire && k.item && live) this.#useItem(k);
+      if (ctl.fire && k.item && live && !this.over) this.#useItem(k);
     }
     this.#bump();
     // Shoves move karts sideways after their height was set; settle them
@@ -814,14 +814,14 @@ export class JamKartGP {
     this.atmo.update(dt, this.time, this.karts, { wet: this.wet, live, raceTime: this.raceTime, finishing: this.firstFinish !== null, watch });
 
     if (this.demo) this.#placeDemoCam(dt);
-    else {
+    else if (!this.over) {
       this.#updateHud(dt);
       this.#updateAudio(live);
     }
     this.view.render();
     this.quality.sample();
 
-    if (!live || this.demo) return null;
+    if (!live || this.demo || this.over) return null;
     const humans = this.karts.filter((k) => k.human);
     const done =
       humans.every((k) => k.finished) ||
@@ -1504,6 +1504,23 @@ export class JamKartGP {
 
   // Pause menu: silence the engines and rain (they're rebuilt by
   // #updateAudio as soon as the race runs again).
+  // Behind the results card and the top 10: the race carries on with every
+  // kart on autopilot (the HUD and engines off). The fireworks keep going
+  // for one more lap of the players' karts, then stop.
+  backdrop(dt) {
+    if (!this.over) {
+      this.over = true;
+      this.setPaused(true);
+      if (this.ui) this.ui.root.style.display = 'none';
+      for (const k of this.karts) k.fireworksTill = k.prog + this.track.length;
+    }
+    this.update(dt, null, true);
+    if (!this.fireworksDone && this.karts.every((k) => !k.human || k.prog >= k.fireworksTill)) {
+      this.fireworksDone = true;
+      this.atmo.stopFireworks();
+    }
+  }
+
   setPaused(on) {
     if (!on) return;
     this.engines?.forEach((e) => e?.stop());
