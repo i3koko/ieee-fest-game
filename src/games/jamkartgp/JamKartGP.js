@@ -1489,6 +1489,15 @@ export class JamKartGP {
     };
   }
 
+  // Pause menu: silence the engines and rain (they're rebuilt by
+  // #updateAudio as soon as the race runs again).
+  setPaused(on) {
+    if (!on) return;
+    this.engines?.forEach((e) => e?.stop());
+    this.engines = [null, null];
+    setRain(0);
+  }
+
   dispose() {
     if (!this.demo) setRain(0);
     this.engines?.forEach((e) => e?.stop());

@@ -345,6 +345,12 @@ export const music = {
     }, fade * 1000);
   },
 
+  // Quieter while the game is paused.
+  duck(on) {
+    if (!ac || !timer) return;
+    out.gain.setTargetAtTime(on ? VOLUME * 0.35 : VOLUME, ac.currentTime, 0.2);
+  },
+
   set({ intensity: i, bpm: b } = {}) {
     if (i !== undefined) intensity = Math.max(0, Math.min(1, i));
     if (b !== undefined) targetBpm = b * TEMPO[song];

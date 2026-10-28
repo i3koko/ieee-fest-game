@@ -4,6 +4,7 @@
 const KEYS = {
   start: ['Enter', 'Space'],
   back: ['Escape'],
+  pause: ['Escape', 'KeyP'],
   action: ['Space', 'Enter'],
   alt: ['ShiftLeft', 'ShiftRight', 'KeyC', 'KeyQ'],
   left: ['ArrowLeft', 'KeyA'],
@@ -16,6 +17,7 @@ const KEYS = {
 const PAD = {
   start: [0, 9],
   back: [8],
+  pause: [8, 9],
   action: [0],
   alt: [2, 3, 4, 5],
   left: [14],

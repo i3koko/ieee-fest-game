@@ -921,6 +921,36 @@ body {
   text-align: center;
 }
 
+/* ------------------------------------------------ pause menu */
+
+.pause-panel {
+  width: min(520px, 92vw);
+  text-align: center;
+}
+.pause-menu {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.8em;
+  margin: 1.4em 0 1.2em;
+}
+.pause-menu span {
+  min-width: 12em;
+  padding: 0.6em 1.4em;
+  border: 2px solid rgba(var(--accent-rgb), 0.3);
+  border-radius: 999px;
+  font-weight: 800;
+  letter-spacing: 0.1em;
+  opacity: 0.55;
+}
+.pause-menu span.on {
+  opacity: 1;
+  color: var(--accent);
+  border-color: var(--accent);
+  background: rgba(var(--accent-rgb), 0.14);
+  box-shadow: 0 0 14px rgba(var(--accent-rgb), 0.35);
+}
+
 /* ------------------------------------------------ Jam Kart split screen */
 
 .jk-half {

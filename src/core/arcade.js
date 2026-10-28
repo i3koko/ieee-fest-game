@@ -9,6 +9,8 @@ const BOARD_EVERY = 14; // idle seconds on the title before showing the top 10
 const BOARD_FOR = 7;
 const SCREEN_TIMEOUT = 20;
 const ENTRY_TIMEOUT = 45; // seconds without typing before the name form gives up
+const PAUSE_TIMEOUT = 60; // a paused game left alone goes back to the title
+const PAUSE_ITEMS = ['RESUME', 'QUIT TO MENU'];
 
 const ICONS = {
   // Cell tower with pulsing signal arcs.
@@ -89,6 +91,14 @@ function template(cfg) {
     </div>
 
     <div id="countdown" class="screen hidden"><div id="countdown-num"></div></div>
+
+    <div id="pause" class="screen panel-screen hidden">
+      <div class="panel pause-panel">
+        <h1>PAUSED</h1>
+        <div class="pause-menu" id="pause-menu"></div>
+        <div class="hint-small">▲ ▼ choose · START to confirm · ESC to resume</div>
+      </div>
+    </div>
 
     <div id="results" class="screen panel-screen hidden">
       <div class="panel">
@@ -171,7 +181,7 @@ export function runArcade(cfg) {
   function setState(next) {
     state = next;
     stateTime = 0;
-    for (const id of ['title-ui', 'howto', 'countdown', 'results', 'board']) show(id, false);
+    for (const id of ['title-ui', 'howto', 'countdown', 'results', 'board', 'pause']) show(id, false);
     show('game-hud', next === 'select' || next === 'countdown' || next === 'play');
     const ids = { title: 'title-ui', howto: 'howto', countdown: 'countdown', results: 'results', board: 'board' };
     if (ids[next]) show(ids[next]);
@@ -193,6 +203,42 @@ export function runArcade(cfg) {
           `<tr class="${i === highlight ? 'me' : ''}"><td>${String(i + 1).padStart(2, '0')}</td><td>${esc(s.name)}</td><td>${s.score.toLocaleString()}</td></tr>`
       )
       .join('');
+  }
+
+  // Pause: the round freezes where it is (countdown included) under a small
+  // menu; RESUME carries on exactly where it stopped.
+  let paused = null; // { state, stateTime } to go back to
+  let pauseSel = 0;
+
+  function renderPause() {
+    $('pause-menu').innerHTML = PAUSE_ITEMS.map((t, i) => `<span class="${i === pauseSel ? 'on' : ''}">${t}</span>`).join('');
+  }
+
+  function pause() {
+    paused = { state, stateTime };
+    pauseSel = 0;
+    renderPause();
+    game.setPaused?.(true);
+    music.duck(true);
+    sfx.move();
+    state = 'paused';
+    stateTime = 0;
+    show('pause');
+  }
+
+  function resume() {
+    show('pause', false);
+    game.setPaused?.(false);
+    music.duck(false);
+    sfx.select();
+    ({ state, stateTime } = paused);
+    paused = null;
+  }
+
+  function quitFromPause() {
+    music.duck(false);
+    sfx.back();
+    startDemo();
   }
 
   function startDemo() {
@@ -363,6 +409,10 @@ export function runArcade(cfg) {
         else if (game.updateSelect(dt, input)) setState('countdown');
         break;
       case 'countdown': {
+        if (input.pressed('pause')) {
+          pause();
+          break;
+        }
         game.update(dt, input, false);
         const n = 3 - Math.floor(stateTime);
         const label = n > 0 ? String(n) : 'GO!';
@@ -374,15 +424,29 @@ export function runArcade(cfg) {
         break;
       }
       case 'play': {
+        if (input.pressed('pause')) {
+          pause();
+          break;
+        }
         const r = game.update(dt, input, true);
-        if (input.pressed('back')) {
-          sfx.back();
-          startDemo();
-        } else if (r) {
+        if (r) {
           sfx.gameOver();
           flash();
           showResults(r);
         }
+        break;
+      }
+      case 'paused': {
+        // The last frame stays on screen; nothing moves until RESUME.
+        const dy = (input.pressed('down') ? 1 : 0) - (input.pressed('up') ? 1 : 0);
+        if (dy && pauseSel + dy >= 0 && pauseSel + dy < PAUSE_ITEMS.length) {
+          pauseSel += dy;
+          renderPause();
+          sfx.move();
+        }
+        if (input.pressed('pause') && stateTime > 0.15) resume();
+        else if (input.pressed('start') && stateTime > 0.15) pauseSel === 0 ? resume() : quitFromPause();
+        else if (idle > PAUSE_TIMEOUT) quitFromPause();
         break;
       }
       case 'results':

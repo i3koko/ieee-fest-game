@@ -1312,6 +1312,13 @@ export class JamKart {
     };
   }
 
+  // Pause menu: silence the engines (#updateAudio rebuilds them on resume).
+  setPaused(on) {
+    if (!on) return;
+    this.engines?.forEach((e) => e?.stop());
+    this.engines = [null, null];
+  }
+
   dispose() {
     this.engines?.forEach((e) => e?.stop());
     if (this.hudRoot) this.hudRoot.innerHTML = '';
