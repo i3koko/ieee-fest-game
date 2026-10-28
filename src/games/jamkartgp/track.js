@@ -392,7 +392,10 @@ function buildTerrain(scene, track) {
   scene.add(ground);
   terrainGrass = grass;
 
-  // Height of the ground anywhere, for placing scenery.
+  // Height of the ground anywhere (scenery, cameras), exactly as drawn: each
+  // grid cell is two triangles split along its (ix+1, iz)-(ix, iz+1)
+  // diagonal, like the PlaneGeometry, not a smooth blend of the corners,
+  // which can be a metre or more off on a steep bank.
   const cell = size / n;
   return (x, z) => {
     const gx = Math.min(Math.max((x - cx + size / 2) / cell, 0), n - 0.001);
@@ -402,7 +405,12 @@ function buildTerrain(scene, track) {
     const fx = gx - ix;
     const fz = gz - iz;
     const at = (a, b) => heights[b * (n + 1) + a];
-    return (at(ix, iz) * (1 - fx) + at(ix + 1, iz) * fx) * (1 - fz) + (at(ix, iz + 1) * (1 - fx) + at(ix + 1, iz + 1) * fx) * fz;
+    const h00 = at(ix, iz);
+    const h10 = at(ix + 1, iz);
+    const h01 = at(ix, iz + 1);
+    const h11 = at(ix + 1, iz + 1);
+    if (fx + fz <= 1) return h00 + (h10 - h00) * fx + (h01 - h00) * fz;
+    return h11 + (h01 - h11) * (1 - fx) + (h10 - h11) * (1 - fz);
   };
 }
 

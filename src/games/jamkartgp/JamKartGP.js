@@ -12,6 +12,7 @@ import { createDirector } from './cinecam.js';
 import { getRecord, setRecord, nameRecord } from './records.js';
 
 const RACERS = 8;
+const CAM_CLEAR = 1.2; // the closest any camera gets to the ground (m)
 const GRAVITY = 30;
 const LAPS = 2; // a real-circuit lap is long, so two make a booth-sized race
 const BOOST_BONUS = 9; // compression adds this to a kart's top speed (m/s)
@@ -176,7 +177,7 @@ export class JamKartGP {
     this.atmo.onFirework = (dist) => kartSfx.firework(dist);
     this.condition = 'CLASSIC';
     // TV cameras for each player once they've finished.
-    this.director = createDirector(this.track);
+    this.director = createDirector(this.track, (x, z, hint) => this.#groundUnder(x, z, hint));
     // Graphics tier: picked automatically from the frame rate (see quality.js).
     this.quality = createQuality((q) => this.#applyQuality(q));
     this.#applyQuality(this.quality.settings);
@@ -1412,6 +1413,8 @@ export class JamKartGP {
     const t = Math.min(dt * 6, 1);
     k.camPos.lerp(target, t);
     k.camLook.lerp(look, t);
+    // Over a crest or beside a bank, never sink into the ground.
+    k.camPos.y = Math.max(k.camPos.y, this.#groundUnder(k.camPos.x, k.camPos.z, k.idx) + CAM_CLEAR);
     k.cam.position.copy(k.camPos);
     k.cam.lookAt(k.camLook);
     const fov = 66 + clamp(k.v, 0, 60) * 0.15 + (k.boostT > 0 ? 8 : 0);
@@ -1426,6 +1429,8 @@ export class JamKartGP {
     const target = new THREE.Vector3(k.x + Math.sin(a) * 16, k.y + 6, k.z + Math.cos(a) * 16);
     const t = Math.min(dt * 2, 1);
     this.demoCam.position.lerp(target, dt > 0.5 ? 1 : t);
+    const cam = this.demoCam.position;
+    cam.y = Math.max(cam.y, this.#groundUnder(cam.x, cam.z, k.idx) + CAM_CLEAR);
     this.demoCam.lookAt(k.x, k.y + 1, k.z);
   }
 
@@ -1482,6 +1487,16 @@ export class JamKartGP {
       el.style.opacity = (0.35 + 0.65 * (1 - (k.prog - o.prog) / 22)).toFixed(2);
       el.style.color = hex(o.color);
     });
+  }
+
+  // Height of the drawn ground under (x, z): the road and its verges near
+  // the circuit (searched around sample `hint`, so a bridge overhead doesn't
+  // count), the terrain everywhere.
+  #groundUnder(x, z, hint) {
+    const terrain = this.board.terrainY(x, z);
+    const { i, lat } = locate(this.track, x, z, hint);
+    if (Math.abs(lat) > TRACK_W / 2 + 8) return terrain;
+    return Math.max(terrain, groundAt(this.track, i, x, z, lat));
   }
 
   #card(k, item) {

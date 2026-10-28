@@ -8,8 +8,9 @@ import { TRACK_W, SAMPLES } from './track.js';
 const SHOTS = ['trackside', 'heli', 'front', 'side', 'trackside'];
 const clamp = THREE.MathUtils.clamp;
 
-export function createDirector(track) {
-  const ground = (x, z) => (track.terrainY ? track.terrainY(x, z) : 0);
+// ground(x, z, hint) is the height of the drawn ground (road, verge or
+// terrain); no camera goes below it.
+export function createDirector(track, ground) {
   const step = track.length / SAMPLES;
 
   // One state per player camera.
@@ -37,7 +38,7 @@ export function createDirector(track) {
         const p = track.pts[i];
         const x = p.x + track.side[i].x * lat;
         const z = p.y + track.side[i].y * lat;
-        fixed.set(x, Math.max(ground(x, z), track.height[i]) + 1.8 + Math.random() * 2, z);
+        fixed.set(x, ground(x, z, i) + 1.8 + Math.random() * 2, z);
       }
       return true;
     };
@@ -89,7 +90,7 @@ export function createDirector(track) {
         look.lerp(kart, Math.min(dt * 6, 1));
         cam.fov += (fov - cam.fov) * Math.min(dt * 3, 1);
       }
-      pos.y = Math.max(pos.y, ground(pos.x, pos.z) + 0.8);
+      pos.y = Math.max(pos.y, ground(pos.x, pos.z, k.idx) + 1.2);
       cam.position.copy(pos);
       cam.lookAt(look);
       cam.updateProjectionMatrix();
