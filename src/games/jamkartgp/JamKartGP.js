@@ -3,7 +3,7 @@ import { sfx } from '../../core/audio.js';
 import { createEngine, kartSfx } from './sounds.js';
 import { music } from '../../core/music.js';
 import { TRACK_W, SAMPLES, FOG, buildTrack, buildBoard, locate, ahead, groundAt, surfaceY, gateHeight } from './track.js';
-import { makeKart, MODELS, PALETTE } from './kart.js';
+import { makeKart, MODELS, PALETTE, limitSuspension } from './kart.js';
 
 const RACERS = 8;
 const GRAVITY = 30;
@@ -13,6 +13,7 @@ const BRAKE = 32;
 // Sideways grip limit (m/s², scaled by each model's grip): generous, so
 // most corners take full throttle and only the tightest hairpins need a lift.
 const LAT_G = 38;
+const STEER_ANGLE = 0.3; // front wheels' full lock (radians), inside the arches
 // Suspension springs (k) and dampers (c) for heave, pitch and roll.
 const SUSP = { k: 150, c: 9, kp: 110, cp: 9, kr: 120, cr: 9 };
 const SELECT_TIMEOUT = 30;
@@ -639,6 +640,14 @@ export class JamKartGP {
       if (ctl.fire && k.item && live) this.#useItem(k);
     }
     this.#bump();
+    // Shoves move karts sideways after their height was set; settle them
+    // back onto the ground so nobody ends up inside a slope.
+    for (const k of this.karts) {
+      const loc = locate(this.track, k.x, k.z, k.idx);
+      k.idx = loc.i;
+      k.lat = loc.lat;
+      k.y = groundAt(this.track, k.idx, k.x, k.z, k.lat);
+    }
     this.#updateBoxes(dt);
     this.#updateWalls(dt);
     this.#updateRings(dt);
@@ -827,6 +836,8 @@ export class JamKartGP {
     // Roll: the body leans out of the corner.
     s.rv += (-SUSP.kr / m * s.roll - SUSP.cr * s.rv - latAccel * 0.2) * dt;
     s.roll = clamp(s.roll + s.rv * dt, -0.16, 0.16);
+    // Never let the body come down onto the tyres.
+    limitSuspension(k.parts, s);
   }
 
   #land(k, ground) {
@@ -1158,7 +1169,9 @@ export class JamKartGP {
     p.body.position.y = k.susp.y;
     p.body.rotation.x = k.susp.pitch;
     p.body.rotation.z = k.susp.roll;
-    for (const w of p.wheels) w.rotation.x += (k.v * dt) / 0.5;
+    // Wheels roll at the kart's speed for their size; the fronts steer.
+    for (const w of p.wheels) w.rotation.x += (k.v * dt) / (w.userData.radius || 0.5);
+    for (const s of p.steer) s.rotation.y = -k.steerVis * STEER_ANGLE;
     k.squash += ((k.boostT > 0 ? 0.72 : 1) - k.squash) * Math.min(dt * 10, 1);
     p.group.scale.set(1 / Math.sqrt(k.squash), 1, k.squash);
     p.flame.visible = k.boostT > 0;

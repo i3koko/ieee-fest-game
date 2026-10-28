@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
-import { TRACK_W, SAMPLES, HAZARDS, sampleAt, surfaceY, vergeY, locate, canvasTexture, rng, strip } from './track.js';
+import { TRACK_W, SAMPLES, HAZARDS, sampleAt, surfaceY, vergeY, locate, canvasTexture, rng, strip, bandStrip, vergeLats } from './track.js';
 
 // Everything around the GP circuit that makes it a racetrack: sky, kerbs,
 // gravel traps, armco, forest, grandstands with a crowd, the pit building,
@@ -269,7 +269,10 @@ function buildGravel(scene, track) {
     const out = track.curv[mid] > 0 ? -1 : 1; // the outside of the bend
     const a = out * (TRACK_W / 2 + 0.6);
     const b = out * (TRACK_W / 2 + 9);
-    scene.add(new THREE.Mesh(strip(track, a, b, (k, lat) => vergeY(track, k, lat) + 0.04, { i0, i1 }), mat));
+    const lats = vergeLats(out, Math.abs(a), Math.abs(b));
+    const gravel = new THREE.Mesh(bandStrip(track, lats, (k, lat) => vergeY(track, k, lat) + 0.015, { i0, i1 }), mat);
+    gravel.userData.ground = 'gravel';
+    scene.add(gravel);
   });
 }
 

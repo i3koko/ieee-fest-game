@@ -45,6 +45,71 @@ export const MODELS = [
 export const PALETTE = [0x3df5ff, 0xff9a1f, 0xff3fd2, 0x9dff3a, 0xffe03d, 0xff3b4a, 0xf4f6ff, 0x8a7dff];
 
 const templates = {};
+const clearances = {}; // per model: how far the body may drop over a wheel
+
+// Measures the smallest gap between each tyre and the body around it: rays
+// straight up from the tyre (for broad surfaces above it) and the distance
+// from the tyre to every nearby body vertex in any direction (for parts
+// beside it, like sidepods, that swing in when the body rolls). Cached.
+function measureClearance(modelId, body, wheels, group) {
+  if (clearances[modelId]) return clearances[modelId];
+  group.updateMatrixWorld(true);
+  const meshes = [];
+  body.traverse((o) => o.isMesh && meshes.push(o));
+  const ray = new THREE.Raycaster();
+  const spots = [];
+  let gap = 0.3;
+  const v = new THREE.Vector3();
+  for (const w of wheels) {
+    const box = new THREE.Box3().setFromObject(w);
+    const c = box.getCenter(new THREE.Vector3());
+    const size = box.getSize(new THREE.Vector3());
+    const r = size.y / 2;
+    const halfW = size.x / 2;
+    spots.push({ x: c.x, y: c.y + r, z: c.z });
+    for (const m of meshes) {
+      const pos = m.geometry.attributes.position;
+      for (let n = 0; n < pos.count; n++) {
+        v.fromBufferAttribute(pos, n).applyMatrix4(m.matrixWorld);
+        const dx = Math.abs(v.x - c.x) - halfW;
+        const dr = Math.hypot(v.y - c.y, v.z - c.z) - r;
+        if (dx > 0.5 || dr > 0.5) continue;
+        gap = Math.min(gap, dx <= 0 && dr <= 0 ? 0 : Math.hypot(Math.max(dx, 0), Math.max(dr, 0)));
+      }
+    }
+    for (let ix = 0; ix <= 4; ix++) {
+      for (let iz = -3; iz <= 3; iz++) {
+        const dz = (iz / 3) * r * 0.85;
+        const top = c.y + Math.sqrt(Math.max(r * r - dz * dz, 0));
+        ray.set(new THREE.Vector3(box.min.x + (size.x * ix) / 4, top - 0.005, c.z + dz), new THREE.Vector3(0, 1, 0));
+        const hit = ray.intersectObjects(meshes, false)[0];
+        if (hit) gap = Math.min(gap, hit.distance);
+      }
+    }
+  }
+  clearances[modelId] = { gap, spots };
+  return clearances[modelId];
+}
+
+// Keeps the suspension inside the wheel arches: works out how far the body
+// around each wheel would move (heave, plus the swing from pitch and roll,
+// which grows with distance from the body's pivot) and scales the motion down
+// if it would close the gap to any tyre. Used by the game and its tests.
+export function limitSuspension(parts, s) {
+  const room = Math.max(0.01, parts.clearance.gap - 0.025);
+  let worst = 0;
+  for (const { x, y, z } of parts.clearance.spots) {
+    worst = Math.max(worst, Math.abs(s.y) + Math.abs(s.pitch) * Math.hypot(z, y) + Math.abs(s.roll) * Math.hypot(x, y));
+  }
+  if (worst <= room) return;
+  const f = room / worst;
+  s.y *= f;
+  s.pitch *= f;
+  s.roll *= f;
+  s.vy *= f;
+  s.pv *= f;
+  s.rv *= f;
+}
 
 // Loads every kart model once, before the game starts. A model that fails to
 // load falls back to the simple built-in kart.
@@ -53,7 +118,8 @@ export async function loadKarts() {
   await Promise.all(
     MODELS.map(async (m) => {
       try {
-        templates[m.id] = (await loader.loadAsync(`${import.meta.env.BASE_URL}models/${m.file}`)).scene;
+        // GP's karts have wheel arches carved for the suspension (tools/build_karts.py --arches).
+        templates[m.id] = (await loader.loadAsync(`${import.meta.env.BASE_URL}models/gp/${m.file}`)).scene;
       } catch (e) {
         console.warn(`Jam Kart: could not load ${m.file}, using the fallback kart`, e);
       }
@@ -121,12 +187,15 @@ export function makeKart(modelId, color) {
     o.material = [].concat(o.material).map((m) => {
       const c = m.clone();
       if (/^Paint/.test(c.name)) paint.push(c);
-      // Polished metal mirrors the lights into a bloom blob; dull it a little.
-      if (/^Metal/.test(c.name)) {
-        c.roughness = 0.55;
-        c.color.multiplyScalar(0.6);
-      }
       const inWheel = o.name.startsWith('Wheel') || o.parent?.name.startsWith('Wheel');
+      // Big polished metal (the dish) mirrors the lights into a bloom blob,
+      // so dull it; rims stay bright so you can see them spin.
+      if (/^Metal/.test(c.name)) {
+        c.roughness = inWheel ? 0.35 : 0.55;
+        c.color.multiplyScalar(inWheel ? 1.1 : 0.6);
+        // With no reflections in the scene, fully metallic rims render black.
+        if (inWheel) c.metalness = 0.3;
+      }
       if (/^Glow/.test(c.name)) (inWheel ? hubs : glow).push(c);
       return c;
     });
@@ -135,8 +204,20 @@ export function makeKart(modelId, color) {
 
   // In daylight the kart casts a soft contact shadow instead of a neon glow.
   // Wheels hang off the kart itself, not the body, so the body can ride on
-  // its suspension while the wheels stay planted.
+  // its suspension while the wheels stay planted. Front wheels sit on a
+  // steering pivot; every wheel spins by its own radius.
   for (const w of wheels) group.attach(w);
+  const clearance = measureClearance(modelId, body, wheels, group);
+  const steer = [];
+  for (const w of wheels) {
+    w.userData.radius = new THREE.Box3().setFromObject(w).getSize(new THREE.Vector3()).y / 2;
+    if (!/F[LR]/.test(w.name)) continue;
+    const pivot = new THREE.Object3D();
+    pivot.position.copy(w.position);
+    group.add(pivot);
+    pivot.attach(w);
+    steer.push(pivot);
+  }
 
   const under = new THREE.Mesh(
     new THREE.PlaneGeometry(3.6, 5.2),
@@ -164,7 +245,7 @@ export function makeKart(modelId, color) {
   group.add(shield);
 
   const parts = {
-    group, body, wheels, under, flame, shield,
+    group, body, wheels, steer, under, flame, shield, clearance,
     setColor(hex) {
       for (const m of paint) m.color.setHex(hex);
       for (const m of glow) {

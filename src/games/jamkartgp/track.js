@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { buildDetails } from './details.js';
 
 // Jam Kart GP: a Grand Prix circuit in rolling forest, loosely inspired by the
@@ -92,7 +93,7 @@ export const surfaceY = (track, i, lat) => track.height[i] - lat * track.bank[i]
 const VERGE = 4;
 export function vergeY(track, i, lat) {
   const a = Math.abs(lat);
-  if (a <= TRACK_W / 2) return surfaceY(track, i, lat);
+  if (a <= TRACK_W / 2) return surfaceY(track, i, lat) + 0.02; // the tarmac mesh sits 2 cm up
   const edge = surfaceY(track, i, Math.sign(lat) * (TRACK_W / 2));
   const t = Math.min((a - TRACK_W / 2) / VERGE, 1);
   const y = edge + (track.base[i] - 0.5 - edge) * t;
@@ -184,6 +185,34 @@ export function strip(track, latA, latB, y, { i0 = 0, i1 = SAMPLES } = {}) {
   g.setIndex(idx);
   g.computeVertexNormals();
   return g;
+}
+
+// Several strips side by side (between each pair of `lats`), merged into
+// one mesh, so a surface with a kink across it (like the verge) is drawn
+// exactly where the karts drive on it.
+export function bandStrip(track, lats, y, opts) {
+  const parts = [];
+  for (let n = 0; n < lats.length - 1; n++) parts.push(strip(track, lats[n], lats[n + 1], y, opts));
+  return mergeGeometries(parts);
+}
+
+// The verge's lateral sample points: dense enough to follow its slope, the
+// flat beyond it and the terrain it may rise to meet.
+export const vergeLats = (s, from = TRACK_W / 2, to = TRACK_W / 2 + 7) => {
+  const out = [];
+  for (let l = from; l < to; l += 0.8) out.push(s * l);
+  if (!out.some((l) => Math.abs(Math.abs(l) - (TRACK_W / 2 + 4)) < 0.01) && to > TRACK_W / 2 + 4 && from < TRACK_W / 2 + 4) out.push(s * (TRACK_W / 2 + 4));
+  out.push(s * to);
+  return out.sort((a, b) => s * (a - b));
+};
+
+// Texture coordinates from world position, so grass meets grass seamlessly.
+export function worldUV(geo, scale) {
+  const pos = geo.attributes.position;
+  const uv = geo.attributes.uv;
+  for (let k = 0; k < pos.count; k++) uv.setXY(k, pos.getX(k) / scale, pos.getZ(k) / scale);
+  uv.needsUpdate = true;
+  return geo;
 }
 
 const worldVert = /* glsl */ `
@@ -330,6 +359,7 @@ function buildTerrain(scene, track) {
   const tex = grassTexture();
   const grass = new THREE.MeshStandardMaterial({ map: tex, roughness: 0.95, side: THREE.DoubleSide });
   const ground = new THREE.Mesh(geo, grass);
+  ground.userData.ground = 'terrain'; // drawn ground, for tests
   ground.position.set(cx, 0, cz);
   scene.add(ground);
   terrainGrass = grass;
@@ -378,15 +408,17 @@ export function buildBoard(scene, track) {
     side: THREE.DoubleSide,
   });
   const onRoad = (k, lat) => surfaceY(track, k, lat) + 0.02;
-  scene.add(new THREE.Mesh(strip(track, TRACK_W / 2, -TRACK_W / 2, onRoad), roadMat));
-  // Grass verges from the tarmac's edge down to the ground on both sides.
-  const vergeMat = terrainGrass.clone();
-  vergeMat.map = terrainGrass.map.clone();
-  vergeMat.map.repeat.set(0.25, 0.05);
-  vergeMat.map.needsUpdate = true;
+  const road = new THREE.Mesh(strip(track, TRACK_W / 2, -TRACK_W / 2, onRoad), roadMat);
+  road.userData.ground = 'road';
+  scene.add(road);
+  // Grass verges from the tarmac's edge down to the ground on both sides,
+  // sampled finely across so the grass is exactly where the karts sit, and
+  // textured in world space so it blends into the terrain.
   for (const s of [1, -1]) {
-    const g = strip(track, s * (TRACK_W / 2), s * (TRACK_W / 2 + 7), (k, lat) => vergeY(track, k, lat));
-    scene.add(new THREE.Mesh(g, vergeMat));
+    const g = worldUV(bandStrip(track, vergeLats(s), (k, lat) => vergeY(track, k, lat)), 18);
+    const verge = new THREE.Mesh(g, terrainGrass);
+    verge.userData.ground = 'verge';
+    scene.add(verge);
   }
 
   const reserved = [];

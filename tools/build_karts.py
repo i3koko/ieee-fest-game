@@ -2,6 +2,9 @@
 
 Run headless:
   /Applications/Blender.app/Contents/MacOS/Blender -b --python tools/build_karts.py -- public/models [preview_dir]
+Jam Kart GP's versions, with wheel arches carved out of the body so the
+suspension can move without the tyres poking through:
+  /Applications/Blender.app/Contents/MacOS/Blender -b --python tools/build_karts.py -- public/models/gp --arches
 
 Karts face -Y in Blender (+Z in glTF / three.js). Material names matter: the
 game recolours "Paint" and "Glow" to the player's chosen colour, and spins the
@@ -15,8 +18,12 @@ import bmesh
 import bpy
 
 args = sys.argv[sys.argv.index('--') + 1:] if '--' in sys.argv else []
+ARCHES = '--arches' in args
+args = [a for a in args if a != '--arches']
 OUT = args[0] if args else 'public/models'
 PREVIEW = args[1] if len(args) > 1 else None
+ARCH_GAP = 0.2  # clearance between tyre and arch, for suspension travel
+cutters = []
 
 bpy.ops.wm.read_factory_settings(use_empty=True)
 
@@ -127,9 +134,26 @@ def rod(parent, a, b, r, mat, name='Rod'):
     return o
 
 
-def wheel(parent, name, loc, major, minor, width):
-    """Rounded tyre (torus) with a metal rim and a glowing hub, axle along X."""
-    bpy.ops.mesh.primitive_torus_add(major_radius=major, minor_radius=minor, major_segments=32, minor_segments=12,
+def spokes(parts, sx, x, count, r_in, r_out, thick, wide, mat, twist=0.0):
+    """`count` flat spokes radiating in the wheel's plane at axial offset x."""
+    for n in range(count):
+        a = n / count * 2 * math.pi
+        mid = (r_in + r_out) / 2
+        parts.append(box(None, (thick, r_out - r_in, wide), (x, math.cos(a) * mid, math.sin(a) * mid), mat, 0,
+                         rot=(-a, twist * sx, 0)))
+
+
+def ring(parts, x, radius, tube, mat):
+    bpy.ops.mesh.primitive_torus_add(major_radius=radius, minor_radius=tube, major_segments=36, minor_segments=8,
+                                     location=(x, 0, 0), rotation=(0, math.pi / 2, 0))
+    parts.append(finish(active(), mat, None, smooth=True))
+
+
+def wheel(parent, name, loc, major, minor, width, style='f1'):
+    """A wheel with its axle along X: a rounded slick tyre plus a rim. The
+    original karts get a plain metal disc; Jam Kart GP's (--arches) get a rim
+    design per kart, so each looks different and you can see it spin."""
+    bpy.ops.mesh.primitive_torus_add(major_radius=major, minor_radius=minor, major_segments=36, minor_segments=12,
                                      location=(0, 0, 0), rotation=(0, math.pi / 2, 0))
     tyre = active()
     tyre.scale = (1, 1, 1)
@@ -137,10 +161,55 @@ def wheel(parent, name, loc, major, minor, width):
     tyre.scale = (width, 1, 1)
     bpy.ops.object.transform_apply(scale=True)
     finish(tyre, 'Tyre', None, smooth=True)
-    rim = cyl(None, major * 0.95, minor * width * 1.3, (0, 0, 0), 'Metal', rot=(0, math.pi / 2, 0), verts=24)
-    hub = cyl(None, major * 0.35, minor * width * 1.5, (0, 0, 0), 'Glow', rot=(0, math.pi / 2, 0), verts=16)
+    tw = minor * width  # half the tyre's width
+    if not ARCHES:
+        parts = [cyl(None, major * 0.95, tw * 1.3, (0, 0, 0), 'Metal', rot=(0, math.pi / 2, 0), verts=24),
+                 cyl(None, major * 0.35, tw * 1.5, (0, 0, 0), 'Glow', rot=(0, math.pi / 2, 0), verts=16)]
+    else:
+        # A dark barrel inside the rim, then the face on each side.
+        parts = [cyl(None, major * 0.92, tw * 1.1, (0, 0, 0), 'Carbon', rot=(0, math.pi / 2, 0), verts=28)]
+        for sx in (-1, 1):
+            x = sx * tw * 0.62
+            if style == 'f1':
+                # Race car: black ten-spoke, glowing lip, centre-lock nut.
+                ring(parts, x, major * 0.9, 0.028, 'Glow')
+                spokes(parts, sx, x + sx * 0.01, 10, major * 0.15, major * 0.88, 0.04, 0.035, 'Carbon')
+                parts.append(cyl(None, major * 0.14, 0.09, (x + sx * 0.03, 0, 0), 'Metal', rot=(0, math.pi / 2, 0), verts=6))
+            elif style == 'buggy':
+                # Chunky six-spoke with a glowing hub.
+                ring(parts, x, major * 0.88, 0.045, 'Metal')
+                spokes(parts, sx, x, 6, major * 0.2, major * 0.86, 0.07, 0.11, 'Metal')
+                parts.append(cyl(None, major * 0.24, 0.08, (x + sx * 0.02, 0, 0), 'Glow', rot=(0, math.pi / 2, 0), verts=16))
+            elif style == 'dish':
+                # Heavy steel disc with bolt holes and lug nuts.
+                parts.append(cyl(None, major * 0.86, 0.05, (x, 0, 0), 'Metal', rot=(0, math.pi / 2, 0), verts=32))
+                for n in range(8):
+                    a = n / 8 * 2 * math.pi
+                    parts.append(cyl(None, major * 0.11, 0.07, (x + sx * 0.005, math.cos(a) * major * 0.56, math.sin(a) * major * 0.56),
+                                     'Carbon', rot=(0, math.pi / 2, 0), verts=12))
+                for n in range(6):
+                    a = n / 6 * 2 * math.pi + 0.3
+                    parts.append(cyl(None, 0.025, 0.08, (x + sx * 0.03, math.cos(a) * major * 0.24, math.sin(a) * major * 0.24),
+                                     'Carbon', rot=(0, math.pi / 2, 0), verts=6))
+                parts.append(cyl(None, major * 0.15, 0.08, (x + sx * 0.02, 0, 0), 'Metal', rot=(0, math.pi / 2, 0), verts=16))
+            elif style == 'whitewall':
+                # Classic: a white band on the sidewall and a chrome dome hubcap.
+                ring(parts, sx * tw * 0.8, major + minor * 0.15, minor * 0.32, 'Trim')
+                ring(parts, x, major * 0.88, 0.03, 'Metal')
+                parts.append(cyl(None, major * 0.82, 0.03, (x, 0, 0), 'Metal', rot=(0, math.pi / 2, 0), verts=32))
+                bpy.ops.mesh.primitive_uv_sphere_add(radius=major * 0.55, segments=24, ring_count=12, location=(x, 0, 0))
+                dome = active()
+                dome.scale = (0.35, 1, 1)
+                bpy.ops.object.transform_apply(scale=True)
+                parts.append(finish(dome, 'Metal', None, smooth=True))
+            else:
+                # Turbine: smooth aero disc, glowing ring, blades in the kart's paint.
+                parts.append(cyl(None, major * 0.86, 0.04, (x, 0, 0), 'Carbon', rot=(0, math.pi / 2, 0), verts=32))
+                ring(parts, x + sx * 0.02, major * 0.7, 0.025, 'Glow')
+                spokes(parts, sx, x + sx * 0.03, 3, major * 0.12, major * 0.66, 0.05, 0.16, 'Paint', twist=0.5)
+                parts.append(cyl(None, major * 0.13, 0.08, (x + sx * 0.03, 0, 0), 'Glow', rot=(0, math.pi / 2, 0), verts=16))
     bpy.ops.object.select_all(action='DESELECT')
-    for o in (rim, hub, tyre):
+    for o in parts + [tyre]:
         o.select_set(True)
     bpy.context.view_layer.objects.active = tyre
     bpy.ops.object.join()
@@ -151,11 +220,34 @@ def wheel(parent, name, loc, major, minor, width):
     return o
 
 
-def wheels(root, front, rear, major, minor, width, x_front, x_rear=None):
+def wheels(root, front, rear, major, minor, width, x_front, x_rear=None, style='f1'):
     x_rear = x_rear or x_front
     r = major + minor
     for name, x, y in (('FL', -x_front, front), ('FR', x_front, front), ('RL', -x_rear, rear), ('RR', x_rear, rear)):
-        wheel(root, f'Wheel_{name}', (x, y, r), major, minor, width)
+        wheel(root, f'Wheel_{name}', (x, y, r), major, minor, width, style)
+        if ARCHES:
+            # A cylinder a little bigger than the tyre, used to carve its arch.
+            bpy.ops.mesh.primitive_cylinder_add(radius=r + ARCH_GAP, depth=minor * width * 2 + 2 * ARCH_GAP, vertices=32,
+                                                location=(x, y, r), rotation=(0, math.pi / 2, 0))
+            c = active()
+            c.name = 'ArchCutter'
+            c.hide_render = True
+            c.hide_set(True)
+            cutters.append(c)
+
+
+def carve_arches(k):
+    """Cut every body part (not the wheels) clear of the arch cylinders."""
+    global cutters
+    for o in k.children_recursive:
+        if o.type != 'MESH' or o.name.startswith('Wheel'):
+            continue
+        for c in cutters:
+            mod = o.modifiers.new('Arch', 'BOOLEAN')
+            mod.operation = 'DIFFERENCE'
+            mod.solver = 'EXACT'
+            mod.object = c
+    cutters = []
 
 
 def driver(root, loc):
@@ -190,7 +282,7 @@ def fiber():
     # The "fibre": a light line running nose to tail.
     box(k, (0.07, 3.3, 0.03), (0, -0.2, 0.78), 'Glow', 0, rot=(math.atan2(0.4, 3.4), 0, 0))
     driver(k, (0, 0.3, 1.08))
-    wheels(k, -1.25, 1.05, 0.3, 0.17, 1.5, 1.08)
+    wheels(k, -1.25, 1.05, 0.3, 0.17, 1.5, 1.08, style='f1')
     return k
 
 
@@ -218,7 +310,7 @@ def five_g():
         rod(k, (x, 1.3, 1.08), (x, 1.3, h), 0.025, 'Carbon')
         ball(k, 0.07, (x, 1.3, h), 'Glow')
     driver(k, (0, 0.1, 1.15))
-    wheels(k, -1.0, 1.05, 0.3, 0.24, 1.7, 1.06)
+    wheels(k, -1.0, 1.05, 0.3, 0.24, 1.7, 1.06, style='buggy')
     return k
 
 
@@ -253,7 +345,7 @@ def satellite():
     dish.rotation_euler = (-0.55, 0, 0)
     rod(k, (0, 1.2, 1.62), (0, 1.48, 2.3), 0.025, 'Metal')
     ball(k, 0.09, (0, 1.48, 2.3), 'Glow')
-    wheels(k, -1.15, 1.15, 0.34, 0.22, 1.6, 1.15)
+    wheels(k, -1.15, 1.15, 0.34, 0.22, 1.6, 1.15, style='dish')
     return k
 
 
@@ -280,7 +372,7 @@ def radio():
     cyl(k, 0.24, 0.13, (0, 1.84, 0.82), 'Glow', rot=(math.pi / 2, 0, 0))
     rod(k, (0.55, 1.4, 0.95), (0.7, 1.75, 3.1), 0.03, 'Metal')
     ball(k, 0.09, (0.7, 1.75, 3.1), 'Glow')
-    wheels(k, -1.15, 1.2, 0.3, 0.2, 1.4, 1.0)
+    wheels(k, -1.15, 1.2, 0.3, 0.2, 1.4, 1.0, style='whitewall')
     return k
 
 
@@ -300,7 +392,7 @@ def laser():
     # The emitter: a glowing lens on the nose with a beam line along the spine.
     ball(k, 0.15, (0, -2.02, 0.44), 'Glow')
     box(k, (0.05, 1.6, 0.03), (0, -1.15, 0.58), 'Glow', 0, rot=(math.atan2(0.3, 1.9), 0, 0))
-    wheels(k, -1.2, 1.15, 0.26, 0.15, 1.3, 1.06)
+    wheels(k, -1.2, 1.15, 0.26, 0.15, 1.3, 1.06, style='turbine')
     return k
 
 
@@ -314,7 +406,12 @@ def export(k, path):
 
 
 os.makedirs(OUT, exist_ok=True)
-karts = [('fiber', fiber()), ('5g', five_g()), ('satellite', satellite()), ('radio', radio()), ('laser', laser())]
+karts = []
+for name, build in (('fiber', fiber), ('5g', five_g), ('satellite', satellite), ('radio', radio), ('laser', laser)):
+    k = build()
+    if ARCHES:
+        carve_arches(k)
+    karts.append((name, k))
 for name, k in karts:
     export(k, os.path.join(OUT, f'kart-{name}.glb'))
 
